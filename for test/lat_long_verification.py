@@ -123,9 +123,9 @@ class pure_pursuit :
                 if(self.desired_brake == 200):
                     target_velocity = 0
             
-                self.erp_msg.steer = steering
-                self.erp_msg.speed = target_velocity
-                self.erp_msg.brake = brake
+                self.erp_msg.steer = int(steering)
+                self.erp_msg.speed = int(target_velocity)
+                self.erp_msg.brake = int(brake)
                 
                 
                 self.plot_velocity.vel_data(self.erp_msg.speed, self.velocity, self.desired_velocity)
@@ -339,21 +339,31 @@ class pure_pursuit :
 
 
 
-    def velocity_pid(self, target_velocity):
-
-        output = self.pid.pid(target_velocity*10, self.erpStatus_msg.speed)
-        if output > 0.0:
-            if output >200:
-                output = 200
-            velocity = output
-            brake =  1
+    def velocity_pid(self, desired_velocity):
+        if desired_velocity*10 > self.erpStatus_msg.speed-20: #가속하는 경우 목표속도를 입력속도로 집어넣는다.
+            velocity = desired_velocity*10
+            brake = 1
+        
         else:
-            velocity = target_velocity*10
+            velocity = desired_velocity*10
             brake = -(output*self.BRAKE_GAIN)
             if brake < 1:
                 brake =1
             elif brake > 33:
-                brake = 33
+                brake = 33    
+        # output = self.pid.pid(desired_velocity*10, self.erpStatus_msg.speed)
+        # if output > 0.0:
+        #     if output >200:
+        #         output = 200
+        #     velocity = output
+        #     brake =  1
+        # else:
+        #     velocity = desired_velocity*10
+        #     brake = -(output*self.BRAKE_GAIN)
+        #     if brake < 1:
+        #         brake =1
+        #     elif brake > 33:
+        #         brake = 33
         return velocity, brake
     
     
@@ -455,7 +465,7 @@ class pidControl:
         self.i_control = 0
         self.controlTime = dt
     
-    def pid(self,target_vel, current_vel):
+    def pid(self,target_vel, current_vel): #(desired_velocity*10, self.erpStatus_msg.speed)
         error = target_vel - current_vel
 
         #TODO: (4) PID 제어 생성
@@ -475,3 +485,4 @@ class pidControl:
 if __name__ == '__main__':
         
     pure_pursuit()
+
