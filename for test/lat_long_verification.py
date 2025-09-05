@@ -340,6 +340,7 @@ class pure_pursuit :
 
 
     def velocity_pid(self, desired_velocity):
+        output = self.pid.pid(desired_velocity*10, self.erpStatus_msg.speed)
         if desired_velocity*10 > self.erpStatus_msg.speed-20: #가속하는 경우 목표속도를 입력속도로 집어넣는다.
             velocity = desired_velocity*10
             brake = 1
@@ -351,7 +352,7 @@ class pure_pursuit :
                 brake =1
             elif brake > 33:
                 brake = 33    
-        # output = self.pid.pid(desired_velocity*10, self.erpStatus_msg.speed)
+
         # if output > 0.0:
         #     if output >200:
         #         output = 200
@@ -485,4 +486,5 @@ class pidControl:
 if __name__ == '__main__':
         
     pure_pursuit()
+
 
