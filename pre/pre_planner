@@ -49,9 +49,8 @@ class State_machine:
         self.tunnel_index_1 = 1555
         self.tunnel_index_2 = 1e9
         self.yaw_cal_start = False
-        # self.tunnel_index_1 = 1000000000000
-        # self.tunnel_index_2 = 0
-
+        self.Uturn_endIndex = 0
+        self.Uturn_startIndex = 0
         #-------------------------------------------------------------------------------
 
 
@@ -81,10 +80,10 @@ class State_machine:
     def rubber_callback(self, msg):
 
         self.is_rubber = True
-        if self.index >= 1010:
+        if self.index >= self.Uturn_endIndex:
             return
         rospy.logwarn(f"{self.index} asasasas {self.rubber_trigger_check}")
-        if self.index >= 840 and self.rubber_trigger_check: #end vehicle_yaw와 start vehicle yaw가 처음 한번만 계산된다.  
+        if self.index >= self.Uturn_startIndex and self.rubber_trigger_check: #end vehicle_yaw와 start vehicle yaw가 처음 한번만 계산된다.  
             self.rubber_trigger = msg.data
             self.rubber_trigger_check = False
             self.yaw_cal_start = True
