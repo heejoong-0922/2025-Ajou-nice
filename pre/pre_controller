@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
@@ -40,6 +41,7 @@ class pure_pursuit :
         rospy.Subscriber('/path_state', String, self.pathState_callback)
         rospy.Subscriber('/desired_velocity', Int32, self.desiredVelocity_callback)
         
+        rospy.Subscriber('/uturn_steer', Int32, self.uturnSteer_callback)
         rospy.Subscriber('/uturn_point', Float32MultiArray, self.uturnPoint_callback)
         rospy.Subscriber('/avoid_point', Float32MultiArray, self.avoidPoint_callback)
         rospy.Subscriber('/lane_state', LaneState, self.lane_callback)
@@ -146,6 +148,11 @@ class pure_pursuit :
         self.erpStatus_msg = msg
         self.velocity = self.erpStatus_msg.speed
 
+    def uturnSteer_callback(self, msg): #from path_plan_uturn
+        self.is_uturn_steer = True
+        self.uturn_steer = msg.data
+
+
     def uturnPoint_callback(self, msg): #uturn point를 차량의 전방방향만 사용하는 이유가 있나?
 
         self.is_laba = True
@@ -181,12 +188,14 @@ class pure_pursuit :
             brake = self.control_brake(goal_velocity)
 
 
-        elif Path_state == "Rubber_cone_path":
-            
-            if self.is_laba:
-                steering = self.cal_laba_steer(self.uturn_point) #uturn_point -> 차량 기준 라바콘의 x좌표만 사용한다
-                target_velocity, goal_velocity=self.control_labacone_velocity(steering) 
-                brake = self.control_brake(goal_velocity)
+        elif Path_state == "Rubber_cone_path": 
+        
+            if self.is_uturn_steer:
+                steering = self.uturn_steer 
+                # target_velocity, goal_velocity=self.control_labacone_velocity(steering) 
+                target_velocity = 7
+                # brake = self.control_brake(goal_velocity)
+                brake = 0 
             else:
                 steering=0
                 target_velocity=0
