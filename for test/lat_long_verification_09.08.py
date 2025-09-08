@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 from asyncio import set_event_loop
 from re import I
 import rospy
@@ -19,12 +16,10 @@ from geometry_msgs.msg import Point32,PoseStamped,Twist
 import time
 from visualization_msgs.msg import Marker
 import csv
+import matplotlib.pyplot as plt
 
 path_name = '08.02.Kcity'
-HEADING_OFFSET_FILE_NAME= 'heading_data/' + path_name + '.csv'
-STEERING_OFFSET_FILE_NAME = 'steering_data/' + path_name +'.csv'
-POSITION_DATA_FILE_NAME = 'position_data/' + path_name +'.csv'
-LATERAL_OFFSET_FILE_NAME = 'lateral_data/' +path_name + '.csv'
+VELOCITY_DATA_FILE_NAME= 'target_vel_data/' + path_name + '.csv'
 
 class FIRFilter:
     def __init__(self, window_size_straight=5, window_size_curve=3, steering_threshold=1.0):#1이 직선과 곡선의 기준 1을 넘으면 곡선으로 간주-> window 사이즈 줄임
@@ -63,7 +58,6 @@ class pure_pursuit :
         rospy.Subscriber("/vehicle_yaw", Float32, self.vehicle_yaw_callback)  
         rospy.Subscriber("/erp42_status", erpStatusMsg, self.status_callback)
         rospy.Subscriber('/desired_velocity', Int32, self.desiredVelocity_callback)
-
         rospy.Subscriber('/path_state', String, self.pathState_callback)
 
 
@@ -74,15 +68,7 @@ class pure_pursuit :
         self.erp_msg = erpCmdMsg()
         self.erpStatus_msg  = erpStatusMsg()
         
-        self.position_f = open(POSITION_DATA_FILE_NAME, 'w')
-        self.steering_f = open(STEERING_OFFSET_FILE_NAME, 'w')
-        self.heading_f = open(HEADING_OFFSET_FILE_NAME, 'w')
-        self.lateral_f = open(LATERAL_OFFSET_FILE_NAME, 'w')
-        
-        self.steering_writer = csv.writer(self.steering_f)
-        self.position_writer = csv.writer(self.position_f)
-        self.heading_writer = csv.writer(self.heading_f)
-        self.lateral_writer = csv.writer(self.lateral_f)
+
         
         rospy.on_shutdown(self.close_files)
         self.GAIN_pi_t =2.25
@@ -120,6 +106,7 @@ class pure_pursuit :
         self.pid_steering = pidControl(p_gain = 0.05, i_gain = 0, d_gain = 0.05, dt = 1/30)
         self.steering_filter = FIRFilter(5)#조향각 이후에 필터 적용
         self.pid= pidControl(p_gain =0.4, i_gain = 0.0, d_gain = 0.001, dt = 0.02)
+        self.plot_velocity = Plot_Velocity()
 
         rate = rospy.Rate(30) # 30hz
         while not rospy.is_shutdown():
@@ -127,34 +114,28 @@ class pure_pursuit :
             is_ready = (self.is_yaw and self.is_path and  self.is_PathState and self.is_odom and self.is_status and self.is_yaw)
             # rospy.logwarn(f'\n\n {self.vehicle_yaw} \n\n')
             print(is_ready)
-            if is_ready and self.erpStatus_msg.control_mode == 1:
-                
+            # if is_ready and self.erpStatus_msg.control_mode == 1:
+            if is_ready:                
                 self.erp_msg.gear = 0
 
                 steering, target_velocity, brake = self.control_state(self.Path_state)
-                print("taget_velocity: ", target_velocity)
 
                 if(self.desired_brake == 200):
                     target_velocity = 0
-                
-                
-
+            
                 self.erp_msg.steer = steering
                 self.erp_msg.speed = target_velocity
                 self.erp_msg.brake = brake
-
-
-                self.steering_data(steering)
-                self.position_data()
-                self.heading_data()
-                self.lateral_data()
-
+                
+                
+                self.plot_velocity.vel_data(self.erp_msg.speed, self.velocity, self.desired_velocity)
                 self.erp_42_ctrl_pub.publish(self.erp_msg)
 
 
                 # print("Current_PATH_STATE : {}".format(self.Path_state))
                 print("Target_Velocity : {:.2f}, Target_steering : {:.2f}".format(target_velocity/10, math.degrees(steering/2000*0.4922)))
                 # print("Current_Velocity : {:.2f}".format(self.velocity/10)) #km/h
+                
             else:
                 self.init_variable()
                 print('Error')
@@ -162,10 +143,7 @@ class pure_pursuit :
 
             rate.sleep()
         
-
-    
-    
-    
+        self.plot_velocity.plot_velocities()
     
     def localPath_callback(self,msg):
         
@@ -187,7 +165,6 @@ class pure_pursuit :
         self.is_yaw = True
         if self.parking_gear == 2:
             self.vehicle_yaw = msg.data + np.pi
-
         else:
             self.vehicle_yaw = msg.data 
 
@@ -221,8 +198,14 @@ class pure_pursuit :
         elif Path_state == "Intersection":
             self.path = self.local_path
             steering = self.calc_stanley(self.path)
-            target_velocity, brake =self.control_vel_brake(steering) #target, goal_velocity 모두 0으로 설정된다 
+            target_velocity, brake =self.control_vel_brake(steering) 
         
+        elif Path_state == "Curve":
+
+            self.path = self.local_path
+            steering = self.calc_stanley(self.path)
+            target_velocity, brake =self.control_vel_brake(steering) 
+
         steering = self.max_value(steering)
 
         return steering, target_velocity, brake
@@ -347,45 +330,9 @@ class pure_pursuit :
     
     def control_vel_brake(self,steering): #target_vel과 brake 계산 
         
-        
-        if self.desired_velocity == 20: #steer 10도 이내->20/ 10도 이상->15
-            steer_rad=steering/2000*0.4922
-            target_velocity=0
-
-            if (abs(steer_rad)<math.radians(10)):
-                target_velocity = 20
-                # target_velocity = 15
-            elif (abs(steer_rad)<0.4922):# 10~28.2도 사이
-                target_velocity = 15
-            else:
-                target_velocity = 15
-
-            # rospy.logwarn(f'\n this : {target_velocity} \n')
-                
-            goal_velocity = target_velocity
-
+                        
+            goal_velocity = self.desired_velocity
             velocity, brake = self.velocity_pid(goal_velocity)
-
-
-            return velocity, brake
-        
-        else:
-            steer_rad=steering/2000*0.4922
-            target_velocity=0
-
-            if (abs(steer_rad)<math.radians(2.5)): #steer2.5도 이내-> desired_vel 유지/ steer2.5도 이상 ->10 $$ desired_velocity가 10보다 작은 경우는 없나? 
-                target_velocity = self.desired_velocity
-                
-            elif (abs(steer_rad)<0.4922):
-                target_velocity = 10
-            else: ##steer_rad는 0.4922보다 더 커질 수 있다!
-                target_velocity = 7
-
-            # rospy.logwarn(f'\n this : {target_velocity} \n')
-                
-            goal_velocity = target_velocity
-
-            velocity,brake = self.velocity_pid(goal_velocity)
 
             return velocity , brake
 
@@ -405,6 +352,7 @@ class pure_pursuit :
                 brake =1
             elif brake > 33:
                 brake = 33    
+        output = self.pid.pid(desired_velocity*10, self.erpStatus_msg.speed)
         # if output > 0.0:
         #     if output >200:
         #         output = 200
@@ -454,44 +402,57 @@ class pure_pursuit :
 ##################  데이터 검증용  ###################
 
 # 1.steering
-    def steering_data(self, DESIRED_STEER):
-        
-        DESIRED_STEER_DEG = DESIRED_STEER/2000*(28.2) # 스탠리
-        current_steer_deg = self.erpStatus_msg.steer/2000 * (28.2)
-        steering_data = [DESIRED_STEER_DEG, current_steer_deg]
-        self.steering_writer.writerow(steering_data)
-        self.steering_f.flush()
 
-
-#2. erp 실제 주행 경로 gps 데이터
-    def position_data(self): 
-        position_data = [self.current_position.x, self.current_position.y]
-        self.position_writer.writerow(position_data)
-        self.position_f.flush()
-
-#3. heading 데이터
-    def heading_data(self):
-        heading_data = [self.vehicle_yaw]
-        self.heading_writer.writerow(heading_data)
-        self.heading_f.flush()
-
-#4. lateral 데이터
-    def lateral_data(self):
-        lateral_data = [self.x_t]
-        self.lateral_writer.writerow(lateral_data)
-        self.lateral_f.flush()
 
 #   file 닫기
     def close_files(self):
-        self.position_f.close()
-        self.steering_f.close()
-        self.heading_f.close()
-        self.lateral_f.close()
+        self.plot_velocity.steering_f.close()
 
 
+class Plot_Velocity:
+
+    def __init__(self):
+        self.vel_target_list = []
+        self.vel_current_list = []
+        self.vel_desired_list = []
+        self.step_list = []
+        self.counter = 0
+        self.steering_f = None
+        self.steering_writer = None
 
 
+    def vel_data(self, TARGET_VELOCITY, CURRENT_VELOCITY, DESIRED_VELOCITY):
 
+        self.steering_f = open(VELOCITY_DATA_FILE_NAME, 'w')        
+        self.steering_writer = csv.writer(self.steering_f)
+
+        TARGET_VELOCITY = TARGET_VELOCITY / 10
+        CURRENT_VELOCITY = CURRENT_VELOCITY / 10
+        velocity_data = [TARGET_VELOCITY, CURRENT_VELOCITY, DESIRED_VELOCITY]
+
+        # CSV 기록
+        self.steering_writer.writerow(velocity_data)
+        self.steering_f.flush()
+
+        # 데이터만 저장
+        self.counter += 1
+        self.step_list.append(self.counter)
+        self.vel_target_list.append(TARGET_VELOCITY)
+        self.vel_current_list.append(CURRENT_VELOCITY)
+        self.vel_desired_list.append(DESIRED_VELOCITY)
+
+    def plot_velocities(self):
+    # 실행 끝난 뒤 한 번만 호출해서 그림 출력
+        plt.figure()
+        plt.plot(self.step_list, self.vel_target_list, label="Target Velocity")
+        plt.plot(self.step_list, self.vel_current_list, label="Current Velocity")
+        plt.plot(self.step_list, self.vel_desired_list, label="Desired Velocity")
+
+        plt.xlabel("Step")
+        plt.ylabel("Velocity (m/s)")
+        plt.legend()
+        plt.grid(True)
+        plt.show()
 
 
 
@@ -505,7 +466,7 @@ class pidControl:
         self.i_control = 0
         self.controlTime = dt
     
-    def pid(self,target_vel, current_vel):
+    def pid(self,target_vel, current_vel): #(desired_velocity*10, self.erpStatus_msg.speed)
         error = target_vel - current_vel
 
         #TODO: (4) PID 제어 생성
@@ -525,5 +486,3 @@ class pidControl:
 if __name__ == '__main__':
         
     pure_pursuit()
-
-    
