@@ -22,11 +22,6 @@ from visualization_msgs.msg import Marker
 from lane_pipeline.msg import LaneState
 import csv
 
-path_name = '08.05.woncheon'
-STEERING_OFFSET_FILE_NAME = 'steering_data/' + path_name +'.csv'
-LATERAL_OFFSET_FILE_NAME = 'lateral_data/' +path_name + '.csv'
-PI_T_OFFSET_FILE_NAME = 'heading_data/' + path_name + '.csv'
-
 
 class pure_pursuit :
     def __init__(self):
@@ -52,15 +47,7 @@ class pure_pursuit :
         self.wp_pub = rospy.Publisher('path_waypoint', Marker, queue_size=5)
         self.erp_msg = erpCmdMsg()
 
-        self.steering_f = open(STEERING_OFFSET_FILE_NAME, 'w')
-        self.lateral_f = open(LATERAL_OFFSET_FILE_NAME, 'w')
-        self.pi_t_f = open(PI_T_OFFSET_FILE_NAME, 'w')
 
-        self.steering_writer = csv.writer(self.steering_f)
-        self.lateral_writer = csv.writer(self.lateral_f)
-        self.pi_t_writer = csv.writer(self.pi_t_f)
-
-        rospy.on_shutdown(self.close_files)
 
         # =====================================
         self.is_path=True
@@ -167,7 +154,7 @@ class pure_pursuit :
 
         self.is_lane = True
         self.lane_error = msg.offset_m
-        self.lane_pi_t = msg.pi_t
+        self.lane_pi_t = msg.curvature_left
 
 
     def desiredVelocity_callback(self, msg):
@@ -219,7 +206,6 @@ class pure_pursuit :
         elif Path_state == "Obstacle_avoiding_path":
 
             if self.is_obj == True:
-
                 steering = self.cal_laba_steer(self.avoid_point)
                 target_velocity, goal_velocity=self.control_avoidingObs_velocity(steering)
                 brake = self.control_brake(goal_velocity)
@@ -256,7 +242,7 @@ class pure_pursuit :
 
     #===================== stanley 파라미터 =================================   
         k_s = 1.9
-        GAIN_pi_t = 1
+        GAIN_pi_t = 0.5
 
 
     # ==================== 현재 속도 구하기 ===================================
@@ -299,9 +285,6 @@ class pure_pursuit :
 
         print("=================================")
         
-        self.steering_data(steering)
-        self.lateral_data(x_t)
-        self.pi_t_data(pi_t)
         
         return steering
 
@@ -513,9 +496,9 @@ class pure_pursuit :
         if (abs(steer_rad)<math.radians(5)):
             target_velocity = self.desired_velocity
         elif (abs(steer_rad)<0.4922):
-            target_velocity = 5
+            target_velocity = 3
         else:
-            target_velocity = 5
+            target_velocity = 3
 
         goal_velocity = target_velocity
         
@@ -696,28 +679,8 @@ class pure_pursuit :
         self.pid_lane.i_control = 0
     
 
-    def steering_data(self, DESIRED_STEER):
-        
-        DESIRED_STEER_DEG = DESIRED_STEER/2000*(28.2) # 스탠리
-        current_steer_deg = self.erpStatus_msg.steer/2000 * (28.2)
-        steering_data = [DESIRED_STEER_DEG, current_steer_deg]
-        self.steering_writer.writerow(steering_data)
-        self.steering_f.flush()
 
-    def lateral_data(self, x_t):
-        lateral_data = [x_t]
-        self.lateral_writer.writerow(lateral_data)
-        self.lateral_f.flush()
 
-    def pi_t_data(self,pi_t):
-        heading_data = [pi_t]
-        self.heading_writer.writerow(heading_data)
-        self.heading_f.flush()
-
-    def close_files(self):
-        self.steering_f.close()
-        self.lateral_f.close()
-        self.pi_t_f.close()
 
 
 
@@ -744,7 +707,7 @@ class pidControl_Laba:
 
 class pidControl_Return:
     def __init__(self):
-        self.p_gain = 0.2
+        self.p_gain = 0.4
         self.i_gain = 0
         self.d_gain = 0.005
         self.prev_error = 0
