@@ -156,7 +156,7 @@ class GPS2UTM:
             elif not self.dynamic_count == 0 and not self.complete_Dynamic: #동적 장애물을 인식한 후, 장애물이 없는 경우
                 #lidar 데이터 노이즈로 갑작스럽게 들어오지 않는 경우/ 동적 장애물을 회피한 경우
                 self.disappear_obs_count +=1    
-                if self.disappear_obs_count >40: #동적 장애물을 회피한 경우
+                if self.disappear_obs_count >20: #동적 장애물을 회피한 경우
                     self.complete_Dynamic = True
                     print("동적 장애물 회피 완료. 정적 장애물 회피 시작")
                     
@@ -218,7 +218,7 @@ class GPS2UTM:
         if self.dist_obstacle == np.inf and self.complete_Dynamic: 
 
             self.side_roi = [-2.5, 2.5] # 측면 roi 설졍 , 즉 y 축 방향으로 -2.5m ~ 2.5m
-            self.front_roi = [0.2, 10] # 전방 roi 설정 , 즉 x 축 방향으로 0.2m ~ 10m
+            self.front_roi = [0.2, 9] # 전방 roi 설정 , 즉 x 축 방향으로 0.2m ~ 10m
             self.obstacle_state_pub.publish("Safe") # 장애물이 감지되지 않았음 알려주기
 
             if len(obstacle_list)>=2: # 동적 장애물 회피 후 장애물 탐지가 2개 이상 되었다면.
@@ -233,7 +233,7 @@ class GPS2UTM:
 
                 gradient_obstacle = math.atan2(diff_y,diff_x) # 두 장애물간의 기울기 계산
 
-                self.offset = -2.0 if gradient_obstacle < 0 else 2.0 # 기울기에 따라 좌우 회피 방향 설정 -> 왼쪽이 더 가까울때 gradient 가 음수, 오른쪽이 더 가까울때 gradient 가 양수 나옴
+                self.offset = -1.8 if gradient_obstacle < 0 else 1.8 # 기울기에 따라 좌우 회피 방향 설정 -> 왼쪽이 더 가까울때 gradient 가 음수, 오른쪽이 더 가까울때 gradient 가 양수 나옴
 
             else: #한 개의 장애물 탐지
                 if nearest_obstacle[2]<1.5: # 탐지된 한개의 장애물과의 거리가 1.5 m 이내라면
@@ -241,7 +241,7 @@ class GPS2UTM:
                     self.avoid_trigger = True # 회피동작 시작 설정
                     self.cnt_obstacle = 1 # 몇번째 회피 동작인지 표시해주기
 
-                    self.offset = 2.0 if nearest_obstacle[1]<0 else -2.0 # 한개의 장애물에 대해 차량 기준 좌우 방향인 y 값의 부호에 따라 offset 주기
+                    self.offset = 1.8 if nearest_obstacle[1]<0 else -1.8 # 한개의 장애물에 대해 차량 기준 좌우 방향인 y 값의 부호에 따라 offset 주기
         else:
             pass
 
@@ -253,7 +253,7 @@ class GPS2UTM:
 
             # 장애물 거리 비교 및 업데이트 (장애물이 한개씩 인식되는게 두 번 생길 경우 계산하기 위해서
             # 장애물이 한 개씩 두 번 들어올 경우 처리
-            if self.dist_obstacle + 1. < nearest_obstacle[2] and self.cnt_obstacle == 0: # 두 번째 장애물이 더 멀때 회피를 시작하고 -> 첫번째 회피를 시작하고 두번째 장애물까지의 거리가 있을때
+            if self.dist_obstacle + 0.5 < nearest_obstacle[2] and self.cnt_obstacle == 0: # 두 번째 장애물이 더 멀때 회피를 시작하고 -> 첫번째 회피를 시작하고 두번째 장애물까지의 거리가 있을때
 
                 self.cnt_obstacle += 1 # 새로운 장애물이 현재 장애물보다 더 멀리 있을 경우
                 self.dist_obstacle = nearest_obstacle[2] 
@@ -270,7 +270,7 @@ class GPS2UTM:
                     self.dist_obstacle = nearest_obstacle[2] # 현재 장애물로 업데이트
 
             if self.cnt_obstacle == 1: # 첫 번째 회피동작일 경우
-                mid_point=(nearest_obstacle[0]-0.7, nearest_obstacle[1] + self.offset)
+                mid_point=(nearest_obstacle[0], nearest_obstacle[1] + self.offset)
 
             elif self.cnt_obstacle == 2: # 두 번째 회피동작일 경우
                 self.return_time = time.time()
