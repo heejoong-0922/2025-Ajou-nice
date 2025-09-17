@@ -214,7 +214,7 @@ class State_machine:
         self.status_msg="Global Path Drive"
         self.Path_state="Global_path"
         self.Path_pub.publish(self.Path_state)
-        self.accel() # 15km/h로 주행하게 하기
+        self.accel() # 12km/h로 주행하게 하기
 
     def Rubber_cone_drive(self):
 
@@ -235,7 +235,7 @@ class State_machine:
         self.status_msg= "Obstacle Avoiding Mission"
         self.Path_state="Obstacle_avoiding_path"
         self.Path_pub.publish(self.Path_state)
-        self.slow() # 5km/h로 주행하라고 하기
+        self.very_slow() # 3km/h로 주행하라고 하기
 
     def Estop_dynamic(self):
 
@@ -251,10 +251,10 @@ class State_machine:
         self.Path_pub.publish(self.Path_state)
         self.slow()
 
-    def accel(self): # 목표 속도 15 km/h
+    def accel(self):
 
         int_msg = Int32()
-        int_msg.data = 15
+        int_msg.data = 12
         self.Desired_velocity_pub.publish(int_msg) 
 
     def slow(self): # 목표 속도 5 km/h
@@ -262,6 +262,12 @@ class State_machine:
         int_msg = Int32()
         int_msg.data = 5
         self.Desired_velocity_pub.publish(int_msg) 
+
+    def very_slow(self): # 목표 속도 5 km/h
+
+        int_msg = Int32()
+        int_msg.data = 3
+        self.Desired_velocity_pub.publish(int_msg)
 
     def normal(self):
         int_msg = Int32()
