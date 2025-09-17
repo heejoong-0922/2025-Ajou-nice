@@ -17,14 +17,15 @@ import time
 from visualization_msgs.msg import Marker
 import csv
 import matplotlib.pyplot as plt
+import time
 
 path_name = '08.02.Kcity'
 VELOCITY_DATA_FILE_NAME= 'target_vel_data/' + path_name + '.csv'
 
 class FIRFilter:
-    def __init__(self, window_size_straight=5, window_size_curve=3, steering_threshold=1.0):#1이 직선과 곡선의 기준 1을 넘으면 곡선으로 간주-> window 사이즈 줄임
-        self.window_size_straight = window_size_straight                                    #조정이 필요 직선과 곡선의 기준이 모호
-        self.window_size_curve = window_size_curve                                          #직선은 5정도면 기존과 동일, 곡선은 변화필요
+    def __init__(self, window_size_straight=5, window_size_curve=3, steering_threshold=1.0): #1이 직선과 곡선의 기준 1을 넘으면 곡선으로 간주-> window 사이즈 줄임
+        self.window_size_straight = window_size_straight                                     #조정이 필요 직선과 곡선의 기준이 모호
+        self.window_size_curve = window_size_curve                                           #직선은 5정도면 기존과 동일, 곡선은 변화필요
         self.steering_threshold = steering_threshold
         self.window_size = window_size_straight
         self.buffer = []
@@ -71,9 +72,9 @@ class pure_pursuit :
 
         
         rospy.on_shutdown(self.close_files)
-        self.GAIN_pi_t =2.25
-        self.GAIN_x_t =3.25
-        self.GAIN_gps =1.5
+        self.GAIN_pi_t =4.75
+        self.GAIN_x_t =2.25
+        self.GAIN_gps =4
         self.BRAKE_GAIN = 0.18
 
         # =====================================
@@ -150,9 +151,6 @@ class pure_pursuit :
         self.is_path=True
         self.local_path=msg
 
-
-
-
     def odom_callback(self,msg):
         
         self.is_odom=True
@@ -181,10 +179,6 @@ class pure_pursuit :
         self.is_status = True
         self.erpStatus_msg = msg
         self.velocity = self.erpStatus_msg.speed
-
-
-
-
 
     def control_state(self, Path_state):
 
@@ -352,7 +346,7 @@ class pure_pursuit :
                 brake =1
             elif brake > 33:
                 brake = 33    
-        output = self.pid.pid(desired_velocity*10, self.erpStatus_msg.speed)
+
         # if output > 0.0:
         #     if output >200:
         #         output = 200
@@ -437,22 +431,28 @@ class Plot_Velocity:
         # 데이터만 저장
         self.counter += 1
         self.step_list.append(self.counter)
+
+        if not hasattr(self, "start_time"):
+            self.start_time = time.time()
+        current_time = time.time() - self.start_time
+        self.time_list.append(current_time)
+
         self.vel_target_list.append(TARGET_VELOCITY)
         self.vel_current_list.append(CURRENT_VELOCITY)
         self.vel_desired_list.append(DESIRED_VELOCITY)
 
     def plot_velocities(self):
-    # 실행 끝난 뒤 한 번만 호출해서 그림 출력
         plt.figure()
-        plt.plot(self.step_list, self.vel_target_list, label="Target Velocity")
-        plt.plot(self.step_list, self.vel_current_list, label="Current Velocity")
-        plt.plot(self.step_list, self.vel_desired_list, label="Desired Velocity")
+        plt.plot(self.time_list, self.vel_target_list, label="Target Velocity")
+        plt.plot(self.time_list, self.vel_current_list, label="Current Velocity")
+        plt.plot(self.time_list, self.vel_desired_list, label="Desired Velocity")
 
-        plt.xlabel("Step")
+        plt.xlabel("Time (s)")
         plt.ylabel("Velocity (m/s)")
         plt.legend()
         plt.grid(True)
         plt.show()
+
 
 
 
