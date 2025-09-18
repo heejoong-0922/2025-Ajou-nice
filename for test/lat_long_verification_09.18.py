@@ -75,7 +75,7 @@ class pure_pursuit :
         self.GAIN_pi_t =4.75
         self.GAIN_x_t =2.25
         self.GAIN_gps =4
-        self.BRAKE_GAIN = 0.18
+        self.BRAKE_GAIN = 0.5
 
         # =====================================
         self.is_path = False
@@ -114,9 +114,7 @@ class pure_pursuit :
 
             is_ready = (self.is_yaw and self.is_path and  self.is_PathState and self.is_odom and self.is_status and self.is_yaw)
             # rospy.logwarn(f'\n\n {self.vehicle_yaw} \n\n')
-            print(is_ready)
-            # if is_ready and self.erpStatus_msg.control_mode == 1:
-            if is_ready:                
+            if is_ready and self.erpStatus_msg.control_mode == 1:
                 self.erp_msg.gear = 0
 
                 steering, target_velocity, brake = self.control_state(self.Path_state)
@@ -126,10 +124,10 @@ class pure_pursuit :
             
                 self.erp_msg.steer = steering
                 self.erp_msg.speed = target_velocity
-                self.erp_msg.brake = brake
+                self.erp_msg.brake = int(brake)
                 
-                
-                self.plot_velocity.vel_data(self.erp_msg.speed, self.velocity, self.desired_velocity)
+                print(f"target_velocity: {target_velocity}, current_velocity: {self.velocity}, desired_vel: {self.desired_velocity}, brake: {brake}")
+                self.plot_velocity.vel_data(target_velocity, self.velocity, self.desired_velocity, brake)
                 self.erp_42_ctrl_pub.publish(self.erp_msg)
 
 
@@ -338,6 +336,7 @@ class pure_pursuit :
         if desired_velocity*10 > self.erpStatus_msg.speed-20: #가속하는 경우 목표속도를 입력속도로 집어넣는다.
             velocity = desired_velocity*10
             brake = 1
+            print("가속 가속 가속 가속")
         
         else:
             velocity = desired_velocity*10
@@ -346,6 +345,7 @@ class pure_pursuit :
                 brake =1
             elif brake > 33:
                 brake = 33    
+            print("감속 감속 감속 감속")
 
         # if output > 0.0:
         #     if output >200:
@@ -409,28 +409,25 @@ class Plot_Velocity:
         self.vel_target_list = []
         self.vel_current_list = []
         self.vel_desired_list = []
-        self.step_list = []
+        self.brake_list = []  # <- brake 리스트 추가
+        self.time_list = []
         self.counter = 0
         self.steering_f = None
         self.steering_writer = None
 
-
-    def vel_data(self, TARGET_VELOCITY, CURRENT_VELOCITY, DESIRED_VELOCITY):
-
-        self.steering_f = open(VELOCITY_DATA_FILE_NAME, 'w')        
-        self.steering_writer = csv.writer(self.steering_f)
+    def vel_data(self, TARGET_VELOCITY, CURRENT_VELOCITY, DESIRED_VELOCITY, BRAKE):
+        if self.steering_f is None:  # 파일이 열려있지 않으면 처음 한 번만 열기
+            self.steering_f = open(VELOCITY_DATA_FILE_NAME, 'w')
+            self.steering_writer = csv.writer(self.steering_f)
+            self.steering_writer.writerow(["Target Velocity", "Current Velocity", "Desired Velocity", "Brake"])  # 헤더 작성
 
         TARGET_VELOCITY = TARGET_VELOCITY / 10
         CURRENT_VELOCITY = CURRENT_VELOCITY / 10
-        velocity_data = [TARGET_VELOCITY, CURRENT_VELOCITY, DESIRED_VELOCITY]
+        velocity_data = [TARGET_VELOCITY, CURRENT_VELOCITY, DESIRED_VELOCITY, BRAKE]
 
         # CSV 기록
         self.steering_writer.writerow(velocity_data)
         self.steering_f.flush()
-
-        # 데이터만 저장
-        self.counter += 1
-        self.step_list.append(self.counter)
 
         if not hasattr(self, "start_time"):
             self.start_time = time.time()
@@ -440,18 +437,22 @@ class Plot_Velocity:
         self.vel_target_list.append(TARGET_VELOCITY)
         self.vel_current_list.append(CURRENT_VELOCITY)
         self.vel_desired_list.append(DESIRED_VELOCITY)
+        self.brake_list.append(BRAKE)
 
     def plot_velocities(self):
         plt.figure()
         plt.plot(self.time_list, self.vel_target_list, label="Target Velocity")
         plt.plot(self.time_list, self.vel_current_list, label="Current Velocity")
         plt.plot(self.time_list, self.vel_desired_list, label="Desired Velocity")
+        plt.plot(self.time_list, self.brake_list, label="Brake", linestyle='--', color='red')  # brake plot 추가
 
         plt.xlabel("Time (s)")
-        plt.ylabel("Velocity (m/s)")
+        plt.ylabel("Value")
+        plt.title("Velocity and Brake over Time")
         plt.legend()
         plt.grid(True)
         plt.show()
+
 
 
 
@@ -486,3 +487,4 @@ class pidControl:
 if __name__ == '__main__':
         
     pure_pursuit()
+
