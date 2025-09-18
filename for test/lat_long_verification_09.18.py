@@ -185,18 +185,18 @@ class pure_pursuit :
         if Path_state == "Global_path":
             self.path = self.local_path
             steering = self.calc_stanley(self.path)
-            target_velocity, brake =self.control_vel_brake(steering)
+            target_velocity, brake =self.control_vel_brake()
 
         elif Path_state == "Intersection":
             self.path = self.local_path
             steering = self.calc_stanley(self.path)
-            target_velocity, brake =self.control_vel_brake(steering) 
+            target_velocity, brake =self.control_vel_brake() 
         
         elif Path_state == "Curve":
 
             self.path = self.local_path
             steering = self.calc_stanley(self.path)
-            target_velocity, brake =self.control_vel_brake(steering) 
+            target_velocity, brake =self.control_vel_brake() 
 
         steering = self.max_value(steering)
 
@@ -320,7 +320,7 @@ class pure_pursuit :
 
 
     
-    def control_vel_brake(self,steering): #target_vel과 brake 계산 
+    def control_vel_brake(self): #target_vel과 brake 계산 
         
                         
             goal_velocity = self.desired_velocity
@@ -487,4 +487,5 @@ class pidControl:
 if __name__ == '__main__':
         
     pure_pursuit()
+
 
