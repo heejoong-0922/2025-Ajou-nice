@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
-
 import rospy
 import rospkg
 from std_msgs.msg import Int32, Bool, Float32MultiArray, String, Float32
@@ -108,7 +106,7 @@ class State_machine:
         #                           }
         
         self.intersection_index = {
-                            'case2' : [12, 42],
+                            'case2' : [-1, -1],
                             'case3' : [-1, -1],
                             'case5' : [-1, -1],
                             'case6' : [-1, -1],
@@ -121,7 +119,7 @@ class State_machine:
         
         # intersection stop point
         self.intersection_stop = {
-                                  'case2' : [32],
+                                  'case2' : [-1],
                                   'case3' : [-1],
                                   'case5' : [-1],
                                   'case6' : [-1],
@@ -145,9 +143,9 @@ class State_machine:
 
         self.curve_index = {
 
-                            'curve7' : [50, 100],
-                            'curve12' : [150, 200],
-                            'curve14' : [250, 300],
+                            'curve7' : [-1, -1], #정지선 이후부터 인덱스 설정하기
+                            'curve12' : [-1, -1], 
+                            'curve14' : [-1, -1],
 
                             }
 
@@ -447,25 +445,27 @@ class State_machine:
 
 
         # ============ case 2 =========================
+        #stop point 2, traffic sign
 
         if self.intersection_case == 'case2':
             case2_stop_x = self.global_path_msg.poses[self.intersection_stop[self.intersection_case][0]].pose.position.x 
             case2_stop_y = self.global_path_msg.poses[self.intersection_stop[self.intersection_case][0]].pose.position.y
             case2_stop_error = self.cal_error(self.x, self.y, case2_stop_x, case2_stop_y)
             
-            if case2_stop_error <= 2.5 and not self.case2_stop_end:
-                rospy.logwarn('before first stop , first stop not end')
-                self.stop()
-                self.apply_brake()  # 브레이크 적용
+            if self.traffic_light ==8:
+                rospy.logwarn('green light 인식됨. accel')
+                self.accel()
 
-                time.sleep(2)   # 차량 정지 후 2초 대기
-                self.remove_brake()
-                self.case2_stop_end = True
-            
-            
             else:
-                self.slow()
-                rospy.logwarn('case 2 index case , but not stop point')
+                rospy.logwarn('red light 인식됨')
+                
+                if case2_stop_error <= 7:
+                    rospy.logwarn('stop stop stop')
+                    self.stop()
+
+                else:
+                    self.slow()
+                    rospy.logwarn(f'stop 에 들어왔지만 {case2_stop_error} 남음 ')
 
             self.status_msg="Intersection Drive"
             self.Path_state="Intersection"
@@ -479,19 +479,20 @@ class State_machine:
             case3_stop_y = self.global_path_msg.poses[self.intersection_stop[self.intersection_case][0]].pose.position.y
             case3_stop_error = self.cal_error(self.x, self.y, case3_stop_x, case3_stop_y)
             
-            if case3_stop_error <= 2.5 and not self.case3_stop_end:
-                rospy.logwarn('before first stop , first stop not end')
-                self.stop()
-                self.apply_brake()  # 브레이크 적용
-
-                time.sleep(2)   # 차량 정지 후 2초 대기
-                self.remove_brake()
-                self.case3_stop_end = True
+            if self.traffic_light ==8:
+                rospy.logwarn('green light 인식됨. accel')
+                self.accel()
 
             else:
-                self.slow()
-                rospy.logwarn('case 3 index case , but not stop point')
+                rospy.logwarn('red light 인식됨')
+                
+                if case3_stop_error <= 7:
+                    rospy.logwarn('stop stop stop')
+                    self.stop()
 
+                else:
+                    self.slow()
+                    rospy.logwarn(f'stop 에 들어왔지만 {case3_stop_error} 남음 ')
 
             self.status_msg="Intersection Drive"
             self.Path_state="Intersection"
@@ -505,23 +506,25 @@ class State_machine:
             case5_stop_y = self.global_path_msg.poses[self.intersection_stop[self.intersection_case][0]].pose.position.y
             case5_stop_error = self.cal_error(self.x, self.y, case5_stop_x, case5_stop_y)
             
-            if case5_stop_error <= 2.5 and not self.case5_stop_end:
-                rospy.logwarn('before first stop , first stop not end')
-                self.stop()
-                self.apply_brake()  # 브레이크 적용
+            if self.traffic_light ==8:
+                rospy.logwarn('green light 인식됨. accel')
+                self.accel()
 
-                time.sleep(2)   # 차량 정지 후 2초 대기
-                self.remove_brake()
-                self.case5_stop_end = True
-            
-            
             else:
-                self.slow()
-                rospy.logwarn('case 5 index case , but not stop point')
+                rospy.logwarn('red light 인식됨')
+                
+                if case5_stop_error <= 7:
+                    rospy.logwarn('stop stop stop')
+                    self.stop()
+
+                else:
+                    self.slow()
+                    rospy.logwarn(f'stop 에 들어왔지만 {case5_stop_error} 남음 ')
 
             self.status_msg="Intersection Drive"
             self.Path_state="Intersection"
             self.Path_pub.publish(self.Path_state)
+
 
         # ============ case 6 =========================
 
@@ -530,15 +533,12 @@ class State_machine:
             case6_stop_y = self.global_path_msg.poses[self.intersection_stop[self.intersection_case][0]].pose.position.y
             case6_stop_error = self.cal_error(self.x, self.y, case6_stop_x, case6_stop_y)
             
-            if case6_stop_error <= 2.5 and not self.case6_stop_end:
+            if case6_stop_error <= 7 and not self.case6_stop_end:
                 rospy.logwarn('before first stop , first stop not end')
                 self.stop()
-                self.apply_brake()  # 브레이크 적용
-                time.sleep(2)   # 차량 정지 후 2초 대기
-                self.remove_brake()
+                time.sleep(3)
                 self.case6_stop_end = True
-            
-            
+                        
             else:
                 self.slow()
                 rospy.logwarn('case 6 index case , but not stop point')
@@ -554,13 +554,10 @@ class State_machine:
             case7_stop_y = self.global_path_msg.poses[self.intersection_stop[self.intersection_case][0]].pose.position.y
             case7_stop_error = self.cal_error(self.x, self.y, case7_stop_x, case7_stop_y)
             
-            if case7_stop_error <= 2.5 and not self.case7_stop_end:
+            if case7_stop_error <= 7 and not self.case7_stop_end:
                 rospy.logwarn('before first stop , first stop not end')
                 self.stop()
-                self.apply_brake()  # 브레이크 적용
-
-                time.sleep(2)   # 차량 정지 후 2초 대기
-                self.remove_brake()
+                time.sleep(3)   
                 self.case7_stop_end = True
             
             else:
@@ -570,6 +567,7 @@ class State_machine:
             self.status_msg="Intersection Drive"
             self.Path_state="Intersection"
             self.Path_pub.publish(self.Path_state)
+
         # ============ case 8 =========================
 
         elif self.intersection_case == 'case8':
@@ -577,19 +575,20 @@ class State_machine:
             case8_stop_y = self.global_path_msg.poses[self.intersection_stop[self.intersection_case][0]].pose.position.y
             case8_stop_error = self.cal_error(self.x, self.y, case8_stop_x, case8_stop_y)
             
-            if case8_stop_error <= 2.5 and not self.case8_stop_end:
-                rospy.logwarn('before first stop , first stop not end')
-                self.stop()
-                self.apply_brake()  # 브레이크 적용
+            if self.traffic_light ==8:
+                rospy.logwarn('green light 인식됨. accel')
+                self.accel()
 
-                time.sleep(2)   # 차량 정지 후 2초 대기
-                self.remove_brake()
-                self.case8_stop_end = True
-            
-            
             else:
-                self.slow()
-                rospy.logwarn('case 8 index case , but not stop point')
+                rospy.logwarn('red light 인식됨')
+                
+                if case8_stop_error <= 7:
+                    rospy.logwarn('stop stop stop')
+                    self.stop()
+
+                else:
+                    self.slow()
+                    rospy.logwarn(f'stop 에 들어왔지만 {case8_stop_error} 남음 ')
 
             self.status_msg="Intersection Drive"
             self.Path_state="Intersection"
@@ -603,19 +602,20 @@ class State_machine:
             case10_stop_y = self.global_path_msg.poses[self.intersection_stop[self.intersection_case][0]].pose.position.y
             case10_stop_error = self.cal_error(self.x, self.y, case10_stop_x, case10_stop_y)
             
-            if case10_stop_error <= 2.5 and not self.case10_stop_end:
-                rospy.logwarn('before first stop , first stop not end')
-                self.stop()
-                self.apply_brake()  # 브레이크 적용
+            if self.traffic_light ==8:
+                rospy.logwarn('green light 인식됨. accel')
+                self.accel()
 
-                time.sleep(2)   # 차량 정지 후 2초 대기
-                self.remove_brake()
-                self.case10_stop_end = True
-            
-            
             else:
-                self.slow()
-                rospy.logwarn('case 10 index case , but not stop point')
+                rospy.logwarn('red light 인식됨')
+                
+                if case10_stop_error <= 7:
+                    rospy.logwarn('stop stop stop')
+                    self.stop()
+
+                else:
+                    self.slow()
+                    rospy.logwarn(f'stop 에 들어왔지만 {case10_stop_error} 남음 ')
 
             self.status_msg="Intersection Drive"
             self.Path_state="Intersection"
@@ -629,19 +629,20 @@ class State_machine:
             case11_stop_y = self.global_path_msg.poses[self.intersection_stop[self.intersection_case][0]].pose.position.y
             case11_stop_error = self.cal_error(self.x, self.y, case11_stop_x, case11_stop_y)
             
-            if case11_stop_error <= 2.5 and not self.case11_stop_end:
-                rospy.logwarn('before first stop , first stop not end')
-                self.stop()
-                self.apply_brake()  # 브레이크 적용
+            if self.traffic_light ==8:
+                rospy.logwarn('green light 인식됨. accel')
+                self.accel()
 
-                time.sleep(2)   # 차량 정지 후 2초 대기
-                self.remove_brake()
-                self.case11_stop_end = True
-            
-            
             else:
-                self.slow()
-                rospy.logwarn('case 11 index case , but not stop point')
+                rospy.logwarn('red light 인식됨')
+                
+                if case11_stop_error <= 7:
+                    rospy.logwarn('stop stop stop')
+                    self.stop()
+
+                else:
+                    self.slow()
+                    rospy.logwarn(f'stop 에 들어왔지만 {case11_stop_error} 남음 ')
 
             self.status_msg="Intersection Drive"
             self.Path_state="Intersection"
@@ -654,13 +655,10 @@ class State_machine:
             case14_stop_y = self.global_path_msg.poses[self.intersection_stop[self.intersection_case][0]].pose.position.y
             case14_stop_error = self.cal_error(self.x, self.y, case14_stop_x, case14_stop_y)
             
-            if case14_stop_error <= 2.5 and not self.case14_stop_end:
+            if case14_stop_error <= 7 and not self.case14_stop_end:
                 rospy.logwarn('before first stop , first stop not end')
                 self.stop()
-                self.apply_brake()  # 브레이크 적용
-
-                time.sleep(2)   # 차량 정지 후 2초 대기
-                self.remove_brake()
+                time.sleep(3)   # 차량 정지 후 3초 대기
                 self.case14_stop_end = True
             
             
