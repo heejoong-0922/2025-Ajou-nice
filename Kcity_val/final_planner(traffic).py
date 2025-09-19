@@ -118,6 +118,7 @@ class State_machine:
                             'case11' : [-1, -1],
                             'case14' : [-1,-1]
                             }
+        
         # intersection stop point
         self.intersection_stop = {
                                   'case2' : [32],
@@ -128,7 +129,8 @@ class State_machine:
                                   'case8' : [-1],
                                   'case10' : [-1],
                                   'case11' : [-1],
-                                  'case14' : [-1]}
+                                  'case14' : [-1]
+                                  }
         
         self.case2_stop_end = False
         self.case3_stop_end = False
@@ -139,6 +141,15 @@ class State_machine:
         self.case10_stop_end = False
         self.case11_stop_end = False
         self.case14_stop_end = False
+
+
+        self.curve_index = {
+
+                            'curve7' : [50, 100],
+                            'curve12' : [150, 200],
+                            'curve14' : [250, 300],
+
+                            }
 
         #-----------------------------------Main----------------------------------------
         rate = rospy.Rate(30)
@@ -286,11 +297,9 @@ class State_machine:
                         self.apply_brake()  # 브레이크 적용
                         # if self.velocity == 0:
                         time.sleep(2)   # 차량 정지 후 2초 대기
-
                         # ====
                         self.remove_brake()
                         # ====
-
                         self.Pickup_end_triggeer_pub.publish(True)
 
                         self.pick_end = True  # 미션 끝났다고 바꾸기
@@ -358,6 +367,10 @@ class State_machine:
 
         elif self.State == 'Intersection':
             self.Action = 'Intersection_drive'
+
+        elif self.State == 'Curve':
+            self.Action = 'Curve_drive'
+
         #-------------------------------------------------------------------------------
 
 
@@ -382,6 +395,8 @@ class State_machine:
             self.parking_path_pub()
         elif self.Action == 'Intersection_drive':
             self.intersection()
+        elif self.Action == 'Curve_drive':
+            self.curve()
         
 
     #-------------------------------State_Area-----------------------------------
@@ -403,6 +418,13 @@ class State_machine:
                 self.State = 'Intersection'
                 self.intersection_case = key
                 break
+        
+        for key, (start, end) in self.curve_index.items():
+            if start <= self.index <= end:
+                self.State = 'Curve'
+                self.curve_case = key
+                break
+
         else:
             self.Action = "Global_path_drive"
 
@@ -413,7 +435,7 @@ class State_machine:
         self.status_msg="Global Path Drive"
         self.Path_state="Global_path"
         self.Path_pub.publish(self.Path_state)
-        self.normal() # 15km/h로 주행하게 하기
+        self.accel() # 15km/h로 주행하게 하기
 
     def intersection(self):
 
@@ -422,8 +444,6 @@ class State_machine:
             pass
         else:
             self.State = "Drive"
-
-
 
 
         # ============ case 2 =========================
@@ -514,7 +534,6 @@ class State_machine:
                 rospy.logwarn('before first stop , first stop not end')
                 self.stop()
                 self.apply_brake()  # 브레이크 적용
-
                 time.sleep(2)   # 차량 정지 후 2초 대기
                 self.remove_brake()
                 self.case6_stop_end = True
@@ -654,12 +673,50 @@ class State_machine:
             self.Path_pub.publish(self.Path_state)
         
 
+    def curve(self):
+
+        start, end = self.curve_index[self.curve_case][0], self.curve_index[self.curve_case][1]
+        if start <= self.index <= end:
+            pass
+        else:
+            self.State = "Drive"
+
+        # ============ case 7 =========================
+
+        if self.curve_case == 'curve7':
+            
+            self.curve_accel()
+
+            self.status_msg="Curve Drive"
+            self.Path_state="Curve"
+            self.Path_pub.publish(self.Path_state)
+
+        # ============ case 12 =========================
+
+        elif self.curve_case == 'curve12':
+
+            self.curve_accel()
+
+            self.status_msg="Curve Drive"
+            self.Path_state="Curve"
+            self.Path_pub.publish(self.Path_state)
+
+        # ============ case 14 =========================
+
+        elif self.curve_case == 'curve14':
+
+            self.curve_accel()
+
+            self.status_msg="Curve Drive"
+            self.Path_state="Curve"
+            self.Path_pub.publish(self.Path_state)
+
 
     def Pick_up_path_drive(self):
         self.status_msg="Pickup Path Drive"
         self.Path_state="Pickup_path"
         self.Path_pub.publish(self.Path_state)
-        self.slow() # 15km/h로 주행하게 하기 
+        self.slow() #5km/h로 주행하게 하기 
 
     def Delivery_path_drive(self):
         self.status_msg="Delivery Path Drive"
@@ -690,15 +747,21 @@ class State_machine:
         int_msg.data = 15
         self.Desired_velocity_pub.publish(int_msg) 
 
+    def curve_accel(self): # 목표 속도 12km/h
+
+        int_msg = Int32()
+        int_msg.data = 12
+        self.Desired_velocity_pub.publish(int_msg) 
+
     def normal(self):
         int_msg = Int32()
-        int_msg.data = 15
+        int_msg.data = 10
         self.Desired_velocity_pub.publish(int_msg)
 
-    def slow(self): # 목표 속도 5 km/h
+    def slow(self): # 목표 속도 7 km/h
 
         int_msg = Int32()
-        int_msg.data = 5
+        int_msg.data = 7
         self.Desired_velocity_pub.publish(int_msg) 
 
     def stop(self): # 정지 명령, 원하는 속도를 0으로 보냄 -> 기어 중립도 해야할까?
