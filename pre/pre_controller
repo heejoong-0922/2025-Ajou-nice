@@ -24,6 +24,7 @@ import csv
 
 
 class pure_pursuit :
+
     def __init__(self):
         rospy.init_node('pure_pursuit', anonymous=True)
 
@@ -46,9 +47,9 @@ class pure_pursuit :
         self.pursuit_pub=rospy.Publisher("/pursuit_path", Path, queue_size = 3)
         self.wp_pub = rospy.Publisher('path_waypoint', Marker, queue_size=5)
         self.erp_msg = erpCmdMsg()
-
-
-
+        self.erpStatus_msg  = erpStatusMsg()
+        self.current_position=Point()
+        self.Path_state="Global_path"
         # =====================================
         self.is_path=True
         self.is_odom=True 
@@ -56,22 +57,20 @@ class pure_pursuit :
         self.is_status = False
         self.is_PathState=False
         self.is_desiredVel = False
-        # 처음 시작 시 필요한 토픽
-
         self.is_laba=False
         self.is_lane= False
         self.is_obj=False
-        # 미션 별 필요한 토픽
+        #===============미션 별 필요한 토픽=======================
         self.uturn_point = 0
-
-        # =====================================
         self.vehicle_yaw=0.
         self.velocity=0.
-        
-        # =====================================
-        self.current_position=Point()
         self.vehicle_length = 1.04
-        self.Path_state="Global_path"
+        # ==============횡방향 제어 파라미터======================
+        self.GAIN_pi_t =4.75
+        self.GAIN_x_t =2.25
+        self.GAIN_gps =4
+        self.BRAKE_GAIN = 0.5
+
 
         self.pid_0to5 = pidControl(p_gain = 3.5, i_gain = 0.1, d_gain = 0.003, dt = 1/30)
         self.pid_5to10 = pidControl(p_gain = 3.5, i_gain = 0.3, d_gain = 0.003, dt = 1/30)
@@ -111,7 +110,7 @@ class pure_pursuit :
     def path_callback(self,msg):
         
         self.is_path=True
-        self.path=msg
+        self.local_path =msg
 
     def odom_callback(self,msg):
         
@@ -169,50 +168,44 @@ class pure_pursuit :
         brake = 0
 
         if Path_state == "Global_path":
-
-            steering = self.calc_stanley()
-            target_velocity, goal_velocity =self.control_driving_velocity(steering)
-            brake = self.control_brake(goal_velocity)
+            
+            self.path = self.local_path
+            steering = self.calc_stanley(self.path)
+            target_velocity, brake =self.control_vel_brake()
 
 
         elif Path_state == "Rubber_cone_path": 
         
             if self.is_uturn_steer:
                 steering = self.uturn_steer 
-                # target_velocity, goal_velocity=self.control_labacone_velocity(steering) 
-                target_velocity = 7
-                # brake = self.control_brake(goal_velocity)
-                brake = 0 
+                target_velocity, brake =self.control_vel_brake()
+
             else:
                 steering=0
                 target_velocity=0
-                brake = 50
+                brake = 20
 
         elif Path_state == "Dead_zone_path":
 
             if self.is_lane == True:
 
                 steering = self.staneley_lane() #lane_error ->이미지 픽셀의 중심과 차선으로 계산한 중심 사이의 차이 계산
-                target_velocity, goal_velocity = self.control_lane_velocity(steering)
-                brake = self.control_brake(goal_velocity)
-            
+                target_velocity, brake =self.control_vel_brake()
 
             else: #차선 인식이 안되었을 때. 오차 0으로 잡고 pid 횡방향 제어
 
                 steering = self.cal_lane_steer(0) 
-                target_velocity, goal_velocity = self.control_lane_velocity(steering)
-                brake = self.control_brake(goal_velocity)
+                target_velocity, brake =self.control_vel_brake()
 
         elif Path_state == "Obstacle_avoiding_path":
 
             if self.is_obj == True:
                 steering = self.cal_laba_steer(self.avoid_point)
-                target_velocity, goal_velocity=self.control_avoidingObs_velocity(steering)
-                brake = self.control_brake(goal_velocity)
+                target_velocity, brake =self.control_vel_brake()
 
             else : 
                 steering = 0
-                target_velocity = 5
+                target_velocity = 50
                 brake = 0
 
         elif Path_state == "Return_path":
@@ -220,12 +213,11 @@ class pure_pursuit :
             if self.is_obj == True:
 
                 steering = self.cal_return_steer(self.avoid_point)
-                target_velocity, goal_velocity=self.control_avoidingObs_velocity(steering)
-                brake = self.control_brake(goal_velocity)
+                target_velocity, brake =self.control_vel_brake()
 
             else : 
                 steering = 0
-                target_velocity = 5
+                target_velocity = 50
                 brake = 0
 
         elif Path_state == "Estop_dynamic_path":
@@ -233,8 +225,6 @@ class pure_pursuit :
             steering = 0
             target_velocity = 0
             brake = 200
-
-        target_velocity = target_velocity*10
 
         return steering, target_velocity, brake
         
@@ -290,15 +280,17 @@ class pure_pursuit :
 
 
 
-    def calc_stanley(self):
-
-        k_s = 1.9
-
+    def calc_stanley(self, path):
 
         # ==================== 전륜 중심 utm 좌표 구하기 ==========================
-        front_utm_x = self.current_position.x + self.vehicle_length * np.cos(self.vehicle_yaw)
-        front_utm_y = self.current_position.y + self.vehicle_length * np.sin(self.vehicle_yaw)
 
+        if self.Path_state == "Global_path":
+            front_utm_x = self.current_position.x + self.GAIN_gps*(self.vehicle_length) * np.cos(self.vehicle_yaw)
+            front_utm_y = self.current_position.y + self.GAIN_gps*(self.vehicle_length) * np.sin(self.vehicle_yaw)
+
+        else:
+            front_utm_x = self.current_position.x
+            front_utm_y = self.current_position.y
         # ==================== 현재 속도 구하기 ===================================
 
         curr_velocity = self.erpStatus_msg.speed
@@ -309,7 +301,7 @@ class pure_pursuit :
         ref_x = []  
         ref_y = []  
 
-        for pose in self.path.poses:
+        for pose in path.poses:
             ref_x.append(pose.pose.position.x)
             ref_y.append(pose.pose.position.y)
 
@@ -328,12 +320,23 @@ class pure_pursuit :
 
         # 현재 위치와 경로 위치의 차이 계산
         x_2 = (Way_x - self.current_position.x) * np.cos(self.vehicle_yaw) + (Way_y - self.current_position.y) * np.sin(self.vehicle_yaw)
-        y_2 = - (Way_x - self.current_position.x) * np.sin(self.vehicle_yaw) + (Way_y - self.current_position.y) * np.cos(self.vehicle_yaw)
+        y_2 = - (Way_x - front_utm_x) * np.sin(self.vehicle_yaw) + (Way_y - front_utm_y) * np.cos(self.vehicle_yaw)        
+        #y_2 = - (Way_x - self.current_position.x) * np.sin(self.vehicle_yaw) + (Way_y - self.current_position.y) * np.cos(self.vehicle_yaw)
 
-        if y_2 > 0:
-            x_t = -np.min(dis_P2) 
-        else:
-            x_t = np.min(dis_P2) 
+        #####vector 외적을 이용한 횡방향 오차 계산####
+        # heading_vec =np.array([np.cos(self.vehicle_yaw),np.sin(self.vehicle_yaw)])
+        # error_vec = np.array([Way_x-front_utm_x, Way_y-front_utm_y])
+        # cross_track_error =np.cross(heading_vec,error_vec)
+        # self.x_t = -cross_track_error
+        
+        #####local 좌표를 이용한 횡방향 오차 계산#####
+        self.x_t = -y_2 
+        
+        #####original x_t ###########
+        # if y_2 > 0: #차량 기준 경로점 왼쪽
+        #     self.x_t = -np.min(dis_P2) 
+        # else:
+        #     self.x_t = np.min(dis_P2) 
 
         # ====================== pi(t) 구하기 =====================================
 
@@ -358,33 +361,20 @@ class pure_pursuit :
         # ======================= 조향각 구하기 ======================================
 
         if curr_velocity_kmh != 0:
-
-            steering = 1.35*pi_t + np.arctan(k_s * x_t / curr_velocity_kmh)
+                steering = self.GAIN_pi_t*pi_t + np.arctan(self.GAIN_x_t * self.x_t / curr_velocity_kmh) 
 
         
         else: # 속도가 0일때 예외처리 
             steering = pi_t
 
-        rospy.logwarn(f'\n x_t : {x_t} \n pi_t : {pi_t} \n')
+        rospy.logwarn(f'\n x_t : {self.x_t} \n pi_t : {pi_t} \n path_yaw : {path_yaw}')
+        steering_raw = 2000 * (steering * 0.422)                    #조향각 이후에 필터 적용
+        steering_filtered = self.steering_filter.apply(steering_raw)#조향각 이후에 평균냄
+        steering = int(steering_filtered)                           #실수형 정수형 변환
 
+        # self.visualization_heading_WP([front_utm_x, front_utm_y],[Way_x, Way_y], self.current_position,min_index)
 
-        # rad to erp_steer
-        steering = int(2000*(steering/0.4922))
-
-        if steering > 2000:
-            steering = 2000
-        elif steering < -2000:
-            steering = -2000
-            
-
-        self.visualization_heading_WP([front_utm_x, front_utm_y],[Way_x, Way_y], self.current_position,min_index)
-
-        print("=================================")
-
-        # if steering>0:
-        #     print("RIGHT HANDLING")
-        # else:
-        #     print("LEFT HANDLING")
+        print("===============steering==================")
             
         print("steering: {:.2f}".format(steering))
 
@@ -392,6 +382,7 @@ class pure_pursuit :
         
 
         return steering
+
     
     def cal_laba_steer(self,labacone_point):
 
@@ -438,95 +429,28 @@ class pure_pursuit :
         
         return target_steering
     
-    def velocity_pid(self, target_velocity):
+    def velocity_pid(self, desired_velocity):
 
-        if target_velocity >= 0 and target_velocity <= 5:
-            output = round(self.pid_0to5.pid(target_vel = target_velocity*10, current_vel = self.velocity))
-        elif target_velocity <= 10:
-            output = round(self.pid_5to10.pid(target_vel = target_velocity*10, current_vel = self.velocity))
-        else:
-            output = round(self.pid_10to20.pid(target_vel = target_velocity*10, current_vel = self.velocity))
-
-        return int(output)
-
-    def control_labacone_velocity(self,steering):
-
-        steer_rad=steering/2000*0.4922
-        target_velocity=0
-
-        if (abs(steer_rad)<math.radians(15)):
-            target_velocity = self.desired_velocity
-        elif (abs(steer_rad)<0.4922):
-            target_velocity = 5
-        else:
-            target_velocity = 5
-
-        goal_velocity = target_velocity
-
-
-        output = self.velocity_pid(target_velocity)
-
-        target_velocity = self.value_check(output)
-
-        return target_velocity, goal_velocity
-
-    def control_driving_velocity(self,steering):
-
-        steer_rad=steering/2000*0.4922
-        target_velocity=0
-
-        if (abs(steer_rad)<math.radians(5)):
-            target_velocity = self.desired_velocity
-        elif (abs(steer_rad)<0.4922):
-            target_velocity = 10
-        else:
-            target_velocity = 7
-
-        goal_velocity = target_velocity
-
-        output = self.velocity_pid(target_velocity)
-
-        target_velocity = self.value_check(output)
-
-        return  goal_velocity, goal_velocity
-    
-    def control_avoidingObs_velocity(self,steering):
-        steer_rad=steering/2000*0.4922
-
-        if (abs(steer_rad)<math.radians(5)):
-            target_velocity = self.desired_velocity
-        elif (abs(steer_rad)<0.4922):
-            target_velocity = 3
-        else:
-            target_velocity = 3
-
-        goal_velocity = target_velocity
+        output = self.pid.pid(desired_velocity*10, self.erpStatus_msg.speed)
+        if desired_velocity*10 > self.erpStatus_msg.speed-20: #가속하는 경우 목표속도를 입력속도로 집어넣는다.
+            velocity = desired_velocity*10
+            brake = 1
+            print("가속 가속 가속 가속")
         
-        output = self.velocity_pid(target_velocity)
-
-        target_velocity = self.value_check(output)
-
-        return goal_velocity, goal_velocity
-    
-    def control_lane_velocity(self, steering):
-        steer_rad = steering/2000*0.4922
-
-        if (abs(steer_rad)<math.radians(3)):
-            target_velocity = self.desired_velocity
-        elif (abs(steer_rad)<0.4922):
-            target_velocity = 5
         else:
-            target_velocity = 5
+            velocity = desired_velocity*10
+            brake = -(output*self.BRAKE_GAIN)
+            if brake < 1:
+                brake =1
+            elif brake > 33:
+                brake = 33    
+            print("감속 감속 감속 감속")
 
 
-        goal_velocity = target_velocity
-        
-        output = self.velocity_pid(target_velocity)
+        return velocity, brake
 
-        target_velocity = self.value_check(output)
 
-        return goal_velocity, goal_velocity
-    
+
     def cal_lane_steer(self, lane_error): #lane error를 기반으로 steering 계산.
 
         error_point = lane_error
@@ -543,63 +467,13 @@ class pure_pursuit :
         
         return target_steering
     
+    def control_vel_brake(self): #target_vel과 brake 계산 
     
-    
-    def control_brake(self, goal_velocity):
+        goal_velocity = self.desired_velocity * 10
+        velocity, brake = self.velocity_pid(goal_velocity)
 
-        if goal_velocity == 5:
-            if self.velocity/10 > goal_velocity+2:    
-                brake = 5
-            else:
-                brake = 0
-        elif goal_velocity == 7:
-            if self.velocity/10 > goal_velocity+2:    
-                brake = 20
-            else:
-                brake = 0
+        return velocity , brake
 
-        elif goal_velocity == 4:
-            if self.velocity/10 > goal_velocity+2:    
-                brake = 5
-            else:
-                brake = 0
-
-        elif goal_velocity == 10:
-            if self.velocity/10 > goal_velocity+2:    
-                brake = 20
-            else:
-                brake = 0
-        elif goal_velocity == 15:
-            if self.velocity/10 > goal_velocity+2:    
-                brake = 5
-            else:
-                brake = 0
-        elif goal_velocity == 20:
-            if self.velocity/10 > goal_velocity+2:    
-                brake = 5
-            else:
-                brake = 0
-        else:
-            rospy.logwarn(f'CHOOSE THE BRAKE MAGNITUDE WITH THIS SPEED')
-            if self.velocity/10 > goal_velocity+2:
-                brake = 10
-            else:
-                brake = 0
-            
-        return brake
-
-    def value_check(self, output):
-
-        if output>200:
-            target_velocity=200
-
-        elif output < 0:
-            target_velocity = 0
-
-        else:
-            target_velocity=int(output)
-
-        return target_velocity
     
 
     def make_marker(waypoint,id):
