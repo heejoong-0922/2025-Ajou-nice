@@ -10,7 +10,6 @@ from std_msgs.msg import Float32MultiArray, String
 # from morai_msgs.msg import GPSMessage
 from geometry_msgs.msg import Point
 from pyproj import Proj
-from tracking_msg.msg import TrackingObjectArray
 from visualization_msgs.msg import Marker, MarkerArray
 from scipy.spatial import distance
 import pyproj
@@ -24,6 +23,7 @@ from custom_msg.msg import PointArray_msg # geometry_msgs/Point[] array -> custo
 import numpy as np
 import time
 from std_msgs.msg import Int32, Bool,String
+from visualization_msgs.msg import MarkerArray, Marker
 
 
 class GPS2UTM:
@@ -31,7 +31,7 @@ class GPS2UTM:
         rospy.loginfo("GPS2UTM is Created")
 
         # ------------------------- Subscriber ----------------------
-        rospy.Subscriber("/lidar/tracking_objects", TrackingObjectArray, self.lidar_callback)
+        rospy.Subscriber("/adaptive_clustering/markers", MarkerArray, self.lidar_callback)
         rospy.Subscriber("/current_waypoint", Int32, self.waypoint_callback)
 
         # -------------------------- Marker ----------------------
@@ -73,221 +73,202 @@ class GPS2UTM:
         self.current_waypoint = msg.data
     
 
-    def lidar_callback(self, _data):
-
+    def lidar_callback(self, msg):
+        # msg: visualization_msgs/MarkerArray
         obstacle_list = []
 
-        self.current_time=time.time()
+        self.current_time = time.time()
 
+        # header는 첫 마커 기준(없으면 now)
+        hdr = msg.markers[0].header if msg.markers else None
         bev_msg = PoseArray()
-        bev_msg.header = _data.header
-
-        obj = _data.array
+        if hdr:
+            bev_msg.header = hdr
+        else:
+            bev_msg.header.stamp = rospy.Time.now()
+            bev_msg.header.frame_id = "velodyne"
 
         tunnel_right_side = []
-        tunnel_left_side = []
+        tunnel_left_side  = []
 
-
-        # not in tunnel, return 
+        # not in tunnel, return
         if not self.current_waypoint in self.tunnel_waypoint:
             self.obstacle_state_pub.publish("Safe")
             print("NOT IN TUNNEL")
-
             return
 
-        # ------------------- processing roi data --------------------
-        for i, obj in enumerate(obj):
-
-            if len(obj.bev.data) < 8: # 바운딩 박스 (x1, y1, x2, y2, x3, y3, x4, y4) 값이 올바른 값이 아닐때 
-                rospy.logwarn("Invalid bounding box format: %s", obj.bev.data)
+        # ------------------- MarkerArray → 박스 센터/사이즈 추출 --------------------
+        # 허용 타입: LINE_LIST(5), CUBE(1), CUBE_LIST(6)
+        for m in msg.markers:
+            if m.type not in (Marker.LINE_LIST, Marker.CUBE, Marker.CUBE_LIST):
                 continue
 
-            bbox_center_x, bbox_center_y = self.calculate_bounding_box_center(obj.bev.data) # 장애물의 중심 위치 계산
-            bbox_width, bbox_height = self.calculate_bounding_box_dimensions(obj.bev.data) # 올바르게 들어왔는지 계산
+            # 좌표계 보정은 생략(입력 frame_id="velodyne" 가정)
+            if m.type == Marker.LINE_LIST:
+                # 선분들의 점들로부터 AABB 생성
+                if len(m.points) < 4:
+                    continue
+                minx = float('inf'); miny = float('inf')
+                maxx = float('-inf'); maxy = float('-inf')
+                for p in m.points:
+                    if p.x < minx: minx = p.x
+                    if p.x > maxx: maxx = p.x
+                    if p.y < miny: miny = p.y
+                    if p.y > maxy: maxy = p.y
 
-            obstacle_size = np.sqrt(bbox_width**2 + bbox_height**2) # 장애물 크기 계산
-
-            d = distance.euclidean((bbox_center_x,bbox_center_y),(0,0)) # 라이다로부터 물체까지 거리 
-
-        # ------------------------------- tunnel roi -------------------------------
-            if obstacle_size > 4: # obstacle size 가 4 이상일때는 터널로 간주
-                if bbox_center_y < 0:      # center_y 값이 음수이면 터널의 오른쪽 -> 오른쪽이 y의 음수 구간
-                    tunnel_right_side.append([bbox_center_x, bbox_center_y,d]) # 오른쪽 터널에 대한 정보 추가
-
-                elif bbox_center_y > 0:     # center_y 값이 양수이면 터널의 왼쪽 -> 왼쪽이 y의 양수 구간
-                    tunnel_left_side.append([bbox_center_x, bbox_center_y,d]) # 왼쪽 터널에 대한 정보 추가
-
-        # ------------------------------- obstacle roi -------------------------------
-
-            if obstacle_size > 1.5 or obstacle_size < 0.3: # 즉 장애물 크기의 범위가 0.3~1.5 , 사이즈가 엄청 작거나 터널 인식 사이즈 보다 작을때 다음장애물로 넘어감
-                continue
-
-            if self.front_roi[0] < bbox_center_x < self.front_roi[1]: # [0][1] 은 전방 roi 값의 x 축 범위 시작점과 끝점을 의미, 즉 장애물의 중심점이 범위내에 들어왔을때
-                if self.side_roi[0] < bbox_center_y <self.side_roi[1]: # y 도 마찬가지
-                    obstacle_list.append([bbox_center_x, bbox_center_y, d]) # roi 범위 만족하면 x,y 중심점과 물체까지의 거리 저장
-                    # 터널은 제외하고 장애물만 obstacle_list에 추가해주고 있음
-        # 반복문 종료
-
-        # ------------------------- tunnel process ---------------------------------
-
-        tunnel_left_point = None; tunnel_right_point = None    
-
-        if len(tunnel_right_side)>0: # 오른쪽 터널로 인식된게 있다면
-            tunnel_right_side.sort(key=lambda x : x[2]) # 오른쪽 터널 까지의 거리 기준으로 정렬
-            tunnel_right_point = tunnel_right_side[0] # 오른쪽 터널이라고 인식된 점 중 전진 방향으로 가장 가까이 위치한 점
-
-            self.publish_obstacles(tunnel_right_point, self.right_point_pub, color=(0.0, 0.0, 1.0)) # rviz 생성
-
-        if len(tunnel_left_side)>0: # 왼쪽 터널로 인식된게 있다면 
-            tunnel_left_side.sort(key=lambda x : x[2]) # 왼쪽 터널 까지의 거리 기준으로 정렬
-            tunnel_left_point = tunnel_left_side[0] # 왼쪽 터널이 차량의 전진방향으로 얼마나 앞에 있는지 저장
-
-            self.publish_obstacles(tunnel_left_point, self.left_point_pub, color=(0.0, 0.0, 1.0)) #rviz로 터널 표시
-
-        
-        # -------------------------------------------------------------------------------
-        
-        if len(obstacle_list) == 0: # 장애물이 없다면
-
-            if self.cnt_obstacle >= 2: # 회피동작이 2번 실행된 경우 -> 정적 장애물 2개가 있었는데, 그 두 장애물 회피가 완료된 이후
-                self.return_afterAvoiding(tunnel_left_point, tunnel_right_point) # 복귀하게 하기
-                return
-
-            elif not self.dynamic_count == 0 and not self.complete_Dynamic: #동적 장애물을 인식한 후, 장애물이 없는 경우
-                #lidar 데이터 노이즈로 갑작스럽게 들어오지 않는 경우/ 동적 장애물을 회피한 경우
-                self.disappear_obs_count +=1    
-                if self.disappear_obs_count >20: #동적 장애물을 회피한 경우
-                    self.complete_Dynamic = True
-                    print("동적 장애물 회피 완료. 정적 장애물 회피 시작")
-                    
-                else:
-                    self.obstacle_state_pub.publish("Dynamic") #갑작스럽게 동적 장애물이 들어오지 않을 때
-                    print(f"disappear_obs_count 카운팅 중 {self.disappear_obs_count}번 ")
-                    return
+                center_x = 0.5 * (minx + maxx)
+                center_y = 0.5 * (miny + maxy)
+                width  = max(0.0, maxx - minx)
+                height = max(0.0, maxy - miny)
 
             else:
-                print("None obstacle!!!") # 아직 장애물이 인식되지 않았음
-                self.obstacle_state_pub.publish("Safe") # 장애물 인식되지 않았다고 알려주기
+                # CUBE / CUBE_LIST : pose + scale 사용
+                s = m.scale
+                if not (s.x > 0.0 and s.y > 0.0):
+                    continue
+                center_x = m.pose.position.x
+                center_y = m.pose.position.y
+                width  = s.x
+                height = s.y
+
+            # 장애물 크기(대략) — 기존 로직 호환
+            obstacle_size = math.sqrt(width**2 + height**2)
+            d = distance.euclidean((center_x, center_y), (0.0, 0.0))
+
+            # ------------------------------- tunnel roi -------------------------------
+            if obstacle_size > 4.0:  # 터널로 판정
+                if center_y < 0:      # y<0 → 오른쪽 벽
+                    tunnel_right_side.append([center_x, center_y, d])
+                elif center_y > 0:    # y>0 → 왼쪽 벽
+                    tunnel_left_side.append([center_x, center_y, d])
+                # 터널은 obstacle_list에 넣지 않음
+                continue
+
+            # ------------------------------- obstacle roi -----------------------------
+            # 기존 필터: 크기 0.3~1.5 사이만 “장애물”
+            if obstacle_size <= 1.5 and obstacle_size >= 0.3:
+                if self.front_roi[0] < center_x < self.front_roi[1]:
+                    if self.side_roi[0] < center_y < self.side_roi[1]:
+                        obstacle_list.append([center_x, center_y, d])
+
+        # ------------------------- tunnel process ---------------------------------
+        tunnel_left_point = None
+        tunnel_right_point = None
+
+        if len(tunnel_right_side) > 0:
+            tunnel_right_side.sort(key=lambda x: x[2])  # 거리 기준
+            tunnel_right_point = tunnel_right_side[0]
+            self.publish_obstacles(tunnel_right_point, self.right_point_pub, color=(0.0, 0.0, 1.0))
+
+        if len(tunnel_left_side) > 0:
+            tunnel_left_side.sort(key=lambda x: x[2])
+            tunnel_left_point = tunnel_left_side[0]
+            self.publish_obstacles(tunnel_left_point, self.left_point_pub, color=(0.0, 0.0, 1.0))
+
+        # -------------------------------------------------------------------------------
+        if len(obstacle_list) == 0:
+            if self.cnt_obstacle >= 2:
+                self.return_afterAvoiding(tunnel_left_point, tunnel_right_point)
+                return
+            elif not self.dynamic_count == 0 and not self.complete_Dynamic:
+                self.disappear_obs_count += 1
+                if self.disappear_obs_count > 20:
+                    self.complete_Dynamic = True
+                    print("동적 장애물 회피 완료. 정적 장애물 회피 시작")
+                else:
+                    self.obstacle_state_pub.publish("Dynamic")
+                    print(f"disappear_obs_count 카운팅 중 {self.disappear_obs_count}번 ")
+                    return
+            else:
+                print("None obstacle!!!")
+                self.obstacle_state_pub.publish("Safe")
                 return
 
-        #장애물이 존재하는 경우
-        print("{}st obstacle detecting, distance : {:2f}!!".format(self.cnt_obstacle, self.dist_obstacle)) # 몇번째 장애물인지와 그 장애물까지의 거리 표시해주기
+        print("{}st obstacle detecting, distance : {:2f}!!".format(self.cnt_obstacle, self.dist_obstacle))
         print("avoid trigger : {}".format(self.avoid_trigger))
 
-        
-        
-        obstacle_list.sort(key=lambda x : x[0]) # 장애물이 있다면 x값을 기준으로 정렬해주기 -> 전진 방향에서 가장 가까운 장애물
+        obstacle_list.sort(key=lambda x: x[0])  # x(전방) 기준
         if len(obstacle_list) == 0:
             pass
         else:
-            nearest_obstacle = obstacle_list[0] # 전진방향에서 가장 가까운 기준으로 정렬되었으니 0번째가 가장 가까운 장애물
-        
-        if self.dist_obstacle == np.inf and not self.complete_Dynamic: #동적 장애물 인식
+            nearest_obstacle = obstacle_list[0]
 
-            if nearest_obstacle[2]<5 and self.dynamic_count == 0:
-            
+        # --------------------------- 동적 장애물 분기 ---------------------------
+        if self.dist_obstacle == np.inf and not self.complete_Dynamic:
+            if nearest_obstacle[2] < 5 and self.dynamic_count == 0:
                 print("동적 장애물과의 거리가 5m 이내, 동적 장애물 처음 처음 처음")
-                # print("nearest_x : {:2f}, nearest_y : {:.2f}".format(nearest_obstacle[0],nearest_obstacle[1]))
                 self.obstacle_state_pub.publish("Dynamic")
-                self.dynamic_count +=1
+                self.dynamic_count += 1
                 self.last_obs_x = nearest_obstacle[0]
                 return
 
-            elif nearest_obstacle[2]<5 and abs(nearest_obstacle[0]-self.last_obs_x)<1.5:
-                #동적 장애물 나타난 후 계속 존재
-            
+            elif nearest_obstacle[2] < 5 and abs(nearest_obstacle[0] - self.last_obs_x) < 1.5:
                 print("동적 장애물 나타난 후 계속 존재")
-                # print("nearest_x : {:2f}, nearest_y : {:.2f}".format(nearest_obstacle[0],nearest_obstacle[1]))
                 self.obstacle_state_pub.publish("Dynamic")
-                self.dynamic_count +=1
+                self.dynamic_count += 1
                 self.last_obs_x = nearest_obstacle[2]
                 return
-
-            # elif not self.dynamic_count ==0: 
-            #     print("#나타났던 동적 장애물이 사라지고, 가장 가까운 obs가 정적장애물로 전환 시")
-            #     self.complete_Dynamic = True
-            
-            else: 
-                self.obstacle_state_pub.publish("Safe")  
+            else:
+                self.obstacle_state_pub.publish("Safe")
                 print("장애물 인식은 되었지만 일정거리 내에 들어오지 않았을 때")
-                
 
+        # ------------------- 동적 이후 정적 장애물 회피 시작 -------------------
+        if self.dist_obstacle == np.inf and self.complete_Dynamic:
+            self.side_roi  = [-2.5, 2.5]
+            self.front_roi = [0.2, 9]
+            self.obstacle_state_pub.publish("Safe")
 
+            if len(obstacle_list) >= 2:
+                self.dist_obstacle = nearest_obstacle[2]
+                self.avoid_trigger = True
+                self.cnt_obstacle = 1
 
-        # 동적 장애물 회피 후 정적 장애물회피
-        if self.dist_obstacle == np.inf and self.complete_Dynamic: 
-
-            self.side_roi = [-2.5, 2.5] # 측면 roi 설졍 , 즉 y 축 방향으로 -2.5m ~ 2.5m
-            self.front_roi = [0.2, 9] # 전방 roi 설정 , 즉 x 축 방향으로 0.2m ~ 10m
-            self.obstacle_state_pub.publish("Safe") # 장애물이 감지되지 않았음 알려주기
-
-            if len(obstacle_list)>=2: # 동적 장애물 회피 후 장애물 탐지가 2개 이상 되었다면.
-                self.dist_obstacle = nearest_obstacle[2] # 가장 가까운 장애물까지의 거리
-                self.avoid_trigger = True # 회피동작 시작 설정
-                self.cnt_obstacle = 1 # 몇번째 회피 동작인지 표시해주기
-
-                secondary_obstacle = obstacle_list[1] # x 값 기준으로 정렬된 장애물들 중 두번째로 가까운 장애물
-
-                diff_x = secondary_obstacle[0]-nearest_obstacle[0] # 첫번째 가까운 장애물과 두번째 가까운 장애물의 x값 계산
-                diff_y = secondary_obstacle[1]-nearest_obstacle[1] # 첫번째 가까운 장애물과 두번째 가까운 장애물의 x값 계산
-
-                gradient_obstacle = math.atan2(diff_y,diff_x) # 두 장애물간의 기울기 계산
-
-                self.offset = -1.8 if gradient_obstacle < 0 else 1.8 # 기울기에 따라 좌우 회피 방향 설정 -> 왼쪽이 더 가까울때 gradient 가 음수, 오른쪽이 더 가까울때 gradient 가 양수 나옴
-
-            else: #한 개의 장애물 탐지
-                if nearest_obstacle[2]<1.5: # 탐지된 한개의 장애물과의 거리가 1.5 m 이내라면
-                    self.dist_obstacle = nearest_obstacle[2] # 한개의 장애물 즉, 가장 가까운 장애물과의 거리 저장
-                    self.avoid_trigger = True # 회피동작 시작 설정
-                    self.cnt_obstacle = 1 # 몇번째 회피 동작인지 표시해주기
-
-                    self.offset = 1.8 if nearest_obstacle[1]<0 else -1.8 # 한개의 장애물에 대해 차량 기준 좌우 방향인 y 값의 부호에 따라 offset 주기
-        else:
-            pass
-
+                secondary_obstacle = obstacle_list[1]
+                diff_x = secondary_obstacle[0] - nearest_obstacle[0]
+                diff_y = secondary_obstacle[1] - nearest_obstacle[1]
+                gradient_obstacle = math.atan2(diff_y, diff_x)
+                self.offset = -1.8 if gradient_obstacle < 0 else 1.8
+            else:
+                if nearest_obstacle[2] < 1.5:
+                    self.dist_obstacle = nearest_obstacle[2]
+                    self.avoid_trigger = True
+                    self.cnt_obstacle = 1
+                    self.offset = 1.8 if nearest_obstacle[1] < 0 else -1.8
 
         # --------------------------------- avoid static ---------------------------------
-        # 장애물을 회피하는 동안의 로직 : 장애물 회피 경로 계산 및 장애물 회피 후 원래 경로 복귀 동작 계산
-        if self.avoid_trigger: # 장애물이 탐지되어 회피 동작이 활성화된 경우
-            mid_point = None # mid_point 는 장애물을 회피하기 위해 설정할 목표 지점
+        if self.avoid_trigger:
+            mid_point = None
 
-            # 장애물 거리 비교 및 업데이트 (장애물이 한개씩 인식되는게 두 번 생길 경우 계산하기 위해서
-            # 장애물이 한 개씩 두 번 들어올 경우 처리
-            if self.dist_obstacle + 0.5 < nearest_obstacle[2] and self.cnt_obstacle == 0: # 두 번째 장애물이 더 멀때 회피를 시작하고 -> 첫번째 회피를 시작하고 두번째 장애물까지의 거리가 있을때
+            if self.dist_obstacle + 0.5 < nearest_obstacle[2] and self.cnt_obstacle == 0:
+                self.cnt_obstacle += 1
+                self.dist_obstacle = nearest_obstacle[2]
+            elif self.dist_obstacle + 0.5 < nearest_obstacle[2] and self.cnt_obstacle == 1:
+                self.cnt_obstacle += 1
+                self.dist_obstacle = nearest_obstacle[2]
+            else:
+                if self.dist_obstacle > nearest_obstacle[2] + 1.0:
+                    pass
+                else:
+                    self.dist_obstacle = nearest_obstacle[2]
 
-                self.cnt_obstacle += 1 # 새로운 장애물이 현재 장애물보다 더 멀리 있을 경우
-                self.dist_obstacle = nearest_obstacle[2] 
-
-            elif self.dist_obstacle + 0.5 < nearest_obstacle[2] and self.cnt_obstacle == 1: 
-                self.cnt_obstacle += 1 # 새로운 장애물이 현재 장애물보다 더 멀리 있을 경우
-                self.dist_obstacle = nearest_obstacle[2] 
-
-            else: # 두번째 회피를 시작하고 두 번째 장애물이 첫번째 장애물보다 더 가까워졌을 경우에 else 걸림, dist_obs가 설정된 이후에 첫번째 장애물에 다가가는 경우
-
-                if self.dist_obstacle > nearest_obstacle[2] + 1.: # 현재 장애물이 더 먼 경우
-                    pass # 그냥 넘어가고
-                else: # 현재 장애물이 더 가까울 경우
-                    self.dist_obstacle = nearest_obstacle[2] # 현재 장애물로 업데이트
-
-            if self.cnt_obstacle == 1: # 첫 번째 회피동작일 경우
-                mid_point=(nearest_obstacle[0], nearest_obstacle[1] + self.offset)
-
-            elif self.cnt_obstacle == 2: # 두 번째 회피동작일 경우
+            if self.cnt_obstacle == 1:
+                mid_point = (nearest_obstacle[0], nearest_obstacle[1] + self.offset)
+            elif self.cnt_obstacle == 2:
                 self.return_time = time.time()
                 self.front_roi = [0.1, 5]
-                mid_point=(nearest_obstacle[0], nearest_obstacle[1] - self.offset)
-
-            else: # 두 번의 회피 동작이 완료되면 회피 비활성화
+                mid_point = (nearest_obstacle[0], nearest_obstacle[1] - self.offset)
+            else:
                 self.avoid_trigger = False
 
-            if mid_point is not None: # mid_point 가 설정된 경우 장애물 회피 상태로 발행
+            if mid_point is not None:
                 self.obstacle_state_pub.publish("Static")
                 self.publish_obstacles(mid_point, self.middle_point_pub, color=(0.0, 1.0, 0.0))
 
-                target_point=Float32MultiArray()
-                target_point.data.append(mid_point[0]) 
+                target_point = Float32MultiArray()
+                target_point.data.append(mid_point[0])
                 target_point.data.append(mid_point[1])
-                self.target_point_publisher.publish(target_point) # 회피하는 point로 발행
+                self.target_point_publisher.publish(target_point)
+
 
 
 
@@ -447,3 +428,4 @@ def run():
 
 if __name__ == '__main__':
     run()
+
