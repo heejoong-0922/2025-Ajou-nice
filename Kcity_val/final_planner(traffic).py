@@ -342,11 +342,8 @@ class State_machine:
         
         elif self.State == "Small_Obstacle_avoid":
 
-            if not self.static_trigger: #경로내에 장애물이 없다면
-                self.State = "Drive"
+            self.Action = "Small_Obstacle_Avoiding"
 
-            else:
-                self.Action = "Small_Obstacle_Avoiding"
 
         elif self.State == "Big_Obstacle_avoid":
 
@@ -720,13 +717,13 @@ class State_machine:
         self.status_msg="Delivery Path Drive"
         self.Path_state="Delivery_path"
         self.Path_pub.publish(self.Path_state)
-        self.slow() # 15km/h로 주행하게 하기 
+        self.slow()  
 
     def Small_obstacle_path_drive(self):
         self.status_msg = "Small Obstacle Avoiding Mission"
         self.Path_state="Small_Obstacle_avoiding_path"
         self.Path_pub.publish(self.Path_state)
-        self.slow()
+        self.obs_avoid_vel()
 
     def Big_obstacle_path_drive(self):
         self.status_msg = "Big Obstacle Avoiding Mission"
@@ -761,6 +758,13 @@ class State_machine:
         int_msg = Int32()
         int_msg.data = 7
         self.Desired_velocity_pub.publish(int_msg) 
+    
+    def obs_avoid_vel(self):
+
+        int_msg = Int32()
+        int_msg.data = 2.5
+        self.Desired_velocity_pub.publish(int_msg) 
+
 
     def stop(self): # 정지 명령, 원하는 속도를 0으로 보냄 -> 기어 중립도 해야할까?
 
@@ -800,3 +804,4 @@ if __name__ == '__main__':
 
     except rospy.ROSInterruptException:
         pass
+
