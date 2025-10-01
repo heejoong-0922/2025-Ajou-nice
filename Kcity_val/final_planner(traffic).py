@@ -65,8 +65,8 @@ class State_machine:
         self.y_roi = [-7, 7]
         # ====  index  ==========================================================================
 
-        self.pickup_index_1 = -1
-        self.pickup_index_2 = -1
+        self.pickup_index_1 = 15
+        self.pickup_index_2 = 115
 
         self.delivery_index_1 = -1
         self.delivery_index_2 = -1
@@ -81,10 +81,10 @@ class State_machine:
         self.parking_index_2 = -2
 
         # ==========픽업 UTM ======================
-        self.pickup_x = 0
-        self.pickup_y = 0
-        self.pickup_stop_dist    = 1.0 #정지 거리
-
+        self.pickup_x = 326584.7325158912
+        self.pickup_y = 4128041.3377281516
+        self.pickup_stop_dist = 1.5 #정지 거리
+        self.PICK_UP_ERROR = 200
         '''
         신호등: /traffic_light
         stop : 5
@@ -246,16 +246,17 @@ class State_machine:
             self.normal()
             if not self.pick_end:  # 아직 미션이 끝나지 않은 상황이라면
                 
-                PICK_UP_ERROR = self.cal_error(self.x, self.y, self.pickup_x, self.pickup_y)
+                self.PICK_UP_ERROR = self.cal_error(self.x, self.y, self.pickup_x, self.pickup_y)
 
-                print("PICKUP ERROR : {:.2f}".format(PICK_UP_ERROR))
+                print("PICKUP ERROR : {:.2f}".format(self.PICK_UP_ERROR))
 
-                if PICK_UP_ERROR < 3.0:  # 목표 지점 n m 이내로 들어오면
+                if self.PICK_UP_ERROR < 5:  # 목표 지점 n m 이내로 들어오면
                     self.stop()  # 정지 명령 보내기
 
-                    if  PICK_UP_ERROR < 1.5:  # 오버슛 발생 (에러가 증가함)
+                    if self.PICK_UP_ERROR < 2.5:  # 오버슛 발생 (에러가 증가함)
                         self.apply_brake()  # 브레이크 적용
                         time.sleep(3)   
+                        print("brake가 걸리는 구간")
                         self.remove_brake()
                         # ====
                         self.pick_end = True  # 미션 끝났다고 바꾸기
@@ -669,7 +670,11 @@ class State_machine:
         self.status_msg="Pickup Path Drive"
         self.Path_state="Pickup_path"
         self.Path_pub.publish(self.Path_state)
-        self.slow() #5km/h로 주행하게 하기 
+        if self.PICK_UP_ERROR < 3.0:  # 목표 지점 n m 이내로 들어오면
+            self.stop()  # 정지 명령 보내기
+            print("속도가 0으로 떨어져야 하는 구간")
+        else:
+            self.slow() #5km/h로 주행하게 하기 
 
     def Delivery_path_drive(self):
         self.status_msg="Delivery Path Drive"
@@ -708,7 +713,7 @@ class State_machine:
 
     def normal(self):
         int_msg = Int32()
-        int_msg.data = 10
+        int_msg.data = 5
         self.Desired_velocity_pub.publish(int_msg)
 
     def slow(self): # 목표 속도 7 km/h
@@ -729,6 +734,7 @@ class State_machine:
         int_msg = Int32()
         int_msg.data = 0
         self.Desired_velocity_pub.publish(int_msg)
+        print("Stop 발동!!!!!!!!")
 
     def apply_brake(self):
         int_msg = Int32()
