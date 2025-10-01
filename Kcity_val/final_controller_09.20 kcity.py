@@ -19,7 +19,7 @@ import csv
 import matplotlib.pyplot as plt
 import time
 
-path_name = '08.02.Kcity'
+path_name = 'pickup_test1'
 
 HEADING_OFFSET_FILE_NAME= 'heading_data/' + path_name + '.csv'
 STEERING_OFFSET_FILE_NAME = 'steering_data/' + path_name +'.csv'
@@ -65,6 +65,7 @@ class pure_pursuit :
         rospy.Subscriber('/desired_velocity', Int32, self.desiredVelocity_callback)
         rospy.Subscriber('/path_state', String, self.pathState_callback)
         rospy.Subscriber('/obs_erp42cmd', erpCmdMsg, self.obs_cmd_callback)
+        rospy.Subscriber('/desired_brake', Int32, self.desiredBrake_callback)
 
 
         # ================================== Publisher ================================ $
@@ -131,11 +132,10 @@ class pure_pursuit :
             if is_ready and self.erpStatus_msg.control_mode == 1:
                 self.erp_msg.gear = 0
 
+
+
                 steering, target_velocity, brake = self.control_state(self.Path_state)
 
-                if(self.desired_brake == 200):
-                    target_velocity = 0
-            
                 self.erp_msg.steer = steering
                 self.erp_msg.speed = target_velocity
                 self.erp_msg.brake = int(brake)
@@ -200,7 +200,7 @@ class pure_pursuit :
         self.erp_obsCmdmsg = msg
 
     def control_state(self, Path_state):
-
+        target_velocity =0
         brake = 0
         steering =0
 
@@ -231,6 +231,16 @@ class pure_pursuit :
                 steering = self.calc_stanley(self.path)
                 target_velocity, brake =self.control_vel_brake() 
 
+        elif Path_state == "Pickup_path":
+
+            self.path = self.local_path
+            steering = self.calc_stanley(self.path)
+            if(self.desired_brake == 200):
+                target_velocity = 0
+                brake =33
+                print('픽업 브레이크 발동!!!!')
+            else:
+                target_velocity, brake =self.control_vel_brake() 
 
         steering = self.max_value(steering)
 
@@ -382,18 +392,7 @@ class pure_pursuit :
                 brake = 33    
             print("감속 감속 감속 감속")
 
-        # if output > 0.0:
-        #     if output >200:
-        #         output = 200
-        #     velocity = output
-        #     brake =  1
-        # else:
-        #     velocity = desired_velocity*10
-        #     brake = -(output*self.BRAKE_GAIN)
-        #     if brake < 1:
-        #         brake =1
-        #     elif brake > 33:
-        #         brake = 33
+
         return velocity, brake
     
     
@@ -425,7 +424,9 @@ class pure_pursuit :
 
         self.is_desiredVel = True
         self.desired_velocity = msg.data
-
+    
+    def desiredBrake_callback(self, msg):
+        self.desired_brake = msg.data
 
 
 ##################  데이터 검증용  ###################
@@ -496,5 +497,6 @@ class pidControl:
 if __name__ == '__main__':
         
     pure_pursuit()
+
 
 
