@@ -17,7 +17,6 @@ class State_machine:
         #--------------------------------Subscriber------------------------------------
         rospy.Subscriber('/current_waypoint', Int32, self.index_callback) # ERP42가 경로상 몇 번째 way_point에 위치한지 받아오기
         rospy.Subscriber("/odom_gps", Odometry, self.odom_callback) # ERP42 위치 정보 받기 (담당자: 진영완님)
-        rospy.Subscriber("/pickup_utm_sign", Float32MultiArray, self.pickup_utm_callback) # 라이다로 표지판 utm 좌표 받기 (담당자: 방지윤님)
         rospy.Subscriber("/dest_sign_local_coord", Float32MultiArray, self.delivery_utm_callback) # 라이다로 표지판 utm 좌표 받기 (담당자: 방지윤님)  
         rospy.Subscriber("/erp42_status", erpStatusMsg, self.status_callback)
         rospy.Subscriber("/vehicle_yaw", Float32, self.vehicle_yaw_callback)
@@ -53,9 +52,6 @@ class State_machine:
         self.is_end_parking = False
         self.end_parking = False
 
-        self.pick_x = 0
-        self.pick_y = 0
-
         self.delivery_x = 0
         self.delivery_y = 0
 
@@ -84,6 +80,10 @@ class State_machine:
         self.parking_index_1 = -1
         self.parking_index_2 = -2
 
+        # ==========픽업 UTM ======================
+        self.pickup_x = 0
+        self.pickup_y = 0
+        self.pickup_stop_dist    = 1.0 #정지 거리
 
         '''
         신호등: /traffic_light
@@ -92,18 +92,6 @@ class State_machine:
         green_left_arrow : 7
         go : 8
         '''
-        # intersection index
-        # self.intersection_index = {
-        #                           'case2' : [357, 387],
-        #                           'case3' : [507, 537],
-        #                           'case5' : [866, 896],
-        #                           'case6' : [1221, 1251],
-        #                           'case7' : [1291, 1321],
-        #                           'case8' : [1586, 1616],
-        #                           'case10' : [2029, 2059],
-        #                           'case11' : [2162, 2192],
-        #                           'case14' : [2434,2464]
-        #                           }
         
         self.intersection_index = {
                             'case2' : [-1, -1],
@@ -119,16 +107,16 @@ class State_machine:
         
         # intersection stop point
         self.intersection_stop = {
-                                  'case2' : [-1],
-                                  'case3' : [-1],
-                                  'case5' : [-1],
-                                  'case6' : [-1],
-                                  'case7' : [-1],
-                                  'case8' : [-1],
-                                  'case10' : [-1],
-                                  'case11' : [-1],
-                                  'case14' : [-1]
-                                  }
+                                'case2' : [-1],
+                                'case3' : [-1],
+                                'case5' : [-1],
+                                'case6' : [-1],
+                                'case7' : [-1],
+                                'case8' : [-1],
+                                'case10' : [-1],
+                                'case11' : [-1],
+                                'case14' : [-1]
+                                }
         
         self.case2_stop_end = False
         self.case3_stop_end = False
@@ -183,27 +171,6 @@ class State_machine:
     def vehicle_yaw_callback(self, msg):
         self.is_yaw = True
         self.vehicle_yaw = msg.data
-
-
-    def pickup_utm_callback(self, msg):
-        self.is_pickup_signutm = True
-        data = msg.data
-
-        if self.Path_state == 'Pickup_path' and self.pick_utm_sure:
-
-            data_sign_x = data[0]
-            data_sign_y = data[1]
-
-            # local_sign_x = (data_sign_x - self.x) * np.cos(self.vehicle_yaw) + (data_sign_y - self.y) * np.sin(self.vehicle_yaw)
-            # local_sign_y = - (data_sign_x - self.x) * np.sin(self.vehicle_yaw) + (data_sign_y - self.y) * np.cos(self.vehicle_yaw)
-
-            self.pick_x, self.pick_y = self.calculate_UTM(data_sign_x, data_sign_y)
-            # if self.x_roi[0] <= local_sign_x <= self.x_roi[1] and self.y_roi[0] <= local_sign_y <= self.y_roi[1]:
-            
-            # self.pick_x = data_sign_x
-            # self.pick_y = data_sign_y
-            print('\n\n\n\n\n pickup utm detected \n\n\n\n\n\n\n')
-            self.pick_utm_sure = False
 
     def delivery_utm_callback(self, msg):
         self.is_delivery_signutm = True
@@ -274,32 +241,23 @@ class State_machine:
         elif self.State == "Drive":
             self.Drive_state()
         
-        elif self.State == "Pick_up": 
+        elif self.State == "Pick_up": #속도가 느려져야 하는 구간이 index설정 구간이 되어야 함.
 
+            self.normal()
             if not self.pick_end:  # 아직 미션이 끝나지 않은 상황이라면
                 
-                PICK_UP_ERROR = self.cal_error(self.x, self.y, self.pick_x, self.pick_y)
+                PICK_UP_ERROR = self.cal_error(self.x, self.y, self.pickup_x, self.pickup_y)
 
                 print("PICKUP ERROR : {:.2f}".format(PICK_UP_ERROR))
 
-                if PICK_UP_ERROR < 3.5:  # 목표 지점 n m 이내로 들어오면
+                if PICK_UP_ERROR < 3.0:  # 목표 지점 n m 이내로 들어오면
                     self.stop()  # 정지 명령 보내기
-
-                    # 잠시 대기 후 에러를 다시 계산하여 멀어지고 있는지 확인
-                    # time.sleep(0.1)
-                    # new_error = self.cal_error(self.x, self.y, self.pick_x, self.pick_y)
-                    # print("new_error : {:.2f}".format(new_error))
-
 
                     if  PICK_UP_ERROR < 1.5:  # 오버슛 발생 (에러가 증가함)
                         self.apply_brake()  # 브레이크 적용
-                        # if self.velocity == 0:
-                        time.sleep(2)   # 차량 정지 후 2초 대기
-                        # ====
+                        time.sleep(3)   
                         self.remove_brake()
                         # ====
-                        self.Pickup_end_triggeer_pub.publish(True)
-
                         self.pick_end = True  # 미션 끝났다고 바꾸기
                         self.State = "Drive"  # 상태천이
 
@@ -314,7 +272,7 @@ class State_machine:
 
                 print("DELIVERY ERROR : {:.2f}".format(DELIVERY_ERROR))
 
-                if DELIVERY_ERROR < 3.5:  # 목표 지점 n m 이내로 들어오면
+                if DELIVERY_ERROR < 3.0:  # 목표 지점 n m 이내로 들어오면
                     self.stop()  # 정지 명령 보내기
 
                     # 잠시 대기 후 에러를 다시 계산하여 멀어지고 있는지 확인
@@ -804,4 +762,6 @@ if __name__ == '__main__':
 
     except rospy.ROSInterruptException:
         pass
+
+
 
