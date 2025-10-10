@@ -1,0 +1,347 @@
+#!/usr/bin/env python3
+# # -*- coding: utf-8 -*-
+
+from turtle import right
+import rospy
+# import tf
+import os
+from std_msgs.msg import Float32MultiArray,Float32
+# from sensor_msgs.msg import Imu
+# from morai_msgs.msg import GPSMessage
+from geometry_msgs.msg import Point
+from pyproj import Proj
+from visualization_msgs.msg import Marker, MarkerArray
+from scipy.spatial import distance
+import pyproj
+from math import pi,sqrt
+import math
+from geometry_msgs.msg import Quaternion
+from pyproj import CRS, Transformer
+from geometry_msgs.msg import PoseArray, Pose
+from custom_msg.msg import PointArray_msg # geometry_msgs/Point[] array -> custom msg 생성 
+# from vehicle_msgs.msg import TrackCone, Track
+import numpy as np
+import time
+from std_msgs.msg import Int32, Bool,String
+from visualization_msgs.msg import MarkerArray, Marker
+
+
+class GPS2UTM:
+    def __init__(self):
+        rospy.loginfo("GPS2UTM is Created")
+
+        # ------------------------- Subscriber ----------------------
+        rospy.Subscriber("/adaptive_clustering/markers", MarkerArray, self.lidar_callback)
+        rospy.Subscriber("/current_waypoint", Int32, self.waypoint_callback)
+        rospy.Subscriber("/vehicle_yaw", Float32, self.vehicle_yaw_callback)
+
+        # -------------------------- Marker ----------------------
+        self.middle_point_pub = rospy.Publisher("target_point", Marker, queue_size=3)
+        self.left_point_pub = rospy.Publisher("left_point", Marker, queue_size=3)
+        self.right_point_pub = rospy.Publisher("right_point", Marker, queue_size=3)
+        # ------------------------- Publisher ----------------------------
+        self.target_point_publisher = rospy.Publisher("avoid_point", Float32MultiArray, queue_size=3) #터널 안 정적 장애물 회피시 사용
+        self.obstacle_state_pub = rospy.Publisher('obstacle_state', String, queue_size=3)
+        self.bev_pub = rospy.Publisher('bev', PoseArray, queue_size=3)
+        self.error_heading_publisher = rospy.Publisher("error_heading", Float32, queue_size=1)
+
+        # 동적 장애물 인지 시 roi
+        self.front_roi = [0.1, 4]
+        self.side_roi = [-2.0, 2.0]
+
+        # obstacle cnt
+        self.cnt_obstacle = 0
+        self.dist_obstacle = np.inf
+        self.dynamic_count = 0
+        self.last_obs_x = 0
+
+        self.avoid_trigger = False
+        self.return_trigger = False
+        self.return_except = 0
+
+        self.right_offset = 4 # 오른쪽 벽과의 거리 오프셋
+        self.left_offset = 10 # 왼쪽 벽과의 거리 오프셋
+        self.RETURN_END_THRESHOLD = 1. # 평행이 맞았다는 기준
+
+        self.disappear_obs_count=0
+        self.offset = 0.
+        self.return_time = 0.0
+        self.complete_Dynamic = False
+        #======================터널 waypoint 설정 ========================
+        self.current_waypoint = 5
+        self.tunnel_waypoint = np.arange(-2 , 77)
+
+        #=======================터널 안 헤딩 ==============================
+        self.tunnel_heading = np.deg2rad(-179)
+    
+    def waypoint_callback(self, msg):
+        self.current_waypoint = msg.data
+    
+
+    def lidar_callback(self, msg):
+        # msg: visualization_msgs/MarkerArray
+        obstacle_list = []
+
+        self.current_time = time.time()
+
+        # header는 첫 마커 기준(없으면 now)
+        hdr = msg.markers[0].header if msg.markers else None
+        bev_msg = PoseArray()
+        if hdr:
+            bev_msg.header = hdr
+        else:
+            bev_msg.header.stamp = rospy.Time.now()
+            bev_msg.header.frame_id = "velodyne"
+
+        # not in tunnel, return
+        if not self.current_waypoint in self.tunnel_waypoint:
+            self.obstacle_state_pub.publish("Safe")
+            print("NOT IN TUNNEL")
+            return
+
+        # ------------------- MarkerArray → 박스 센터/사이즈 추출 --------------------
+        # 허용 타입: LINE_LIST(5), CUBE(1), CUBE_LIST(6)
+        for m in msg.markers:
+            if m.type not in (Marker.LINE_LIST, Marker.CUBE, Marker.CUBE_LIST):
+                continue
+
+            # 좌표계 보정은 생략(입력 frame_id="velodyne" 가정)
+            if m.type == Marker.LINE_LIST:
+                # 선분들의 점들로부터 AABB 생성
+                if len(m.points) < 4:
+                    continue
+                minx = float('inf'); miny = float('inf')
+                maxx = float('-inf'); maxy = float('-inf')
+                for p in m.points:
+                    if p.x < minx: minx = p.x
+                    if p.x > maxx: maxx = p.x
+                    if p.y < miny: miny = p.y
+                    if p.y > maxy: maxy = p.y
+
+                center_x = 0.5 * (minx + maxx)
+                center_y = 0.5 * (miny + maxy)
+                width  = max(0.0, maxx - minx)
+                height = max(0.0, maxy - miny)
+            else:
+                # CUBE / CUBE_LIST : pose + scale 사용
+                s = m.scale
+                if not (s.x > 0.0 and s.y > 0.0):
+                    continue
+                center_x = m.pose.position.x
+                center_y = m.pose.position.y
+                width  = s.x
+                height = s.y
+
+            # 장애물 크기(대략) — 기존 로직 호환
+            obstacle_size = math.sqrt(width**2 + height**2)
+            d = distance.euclidean((center_x, center_y), (0.0, 0.0))
+            if width - height > 0.3: #원통 2개가 합쳐져 있는 경우
+                cylinder_count= 2
+            else: 
+                cylinder_count = 1    
+            # ------------------------------- obstacle roi -----------------------------
+            # 기존 필터: 크기 0.3~1.5 사이만 “장애물”
+            if obstacle_size <= 1.5 and obstacle_size >= 0.3:
+                if self.front_roi[0] < center_x < self.front_roi[1]:
+                    if self.side_roi[0] < center_y < self.side_roi[1]:
+                        obstacle_list.append([center_x, center_y, d, cylinder_count])
+            # -------------------------------------------------------------------------------
+        if len(obstacle_list) == 0:
+            if self.cnt_obstacle >= 2:
+                self.return_afterAvoiding()
+                return
+            elif not self.dynamic_count == 0 and not self.complete_Dynamic:
+                self.disappear_obs_count += 1
+                if self.disappear_obs_count > 20:
+                    self.complete_Dynamic = True
+                    print("동적 장애물 회피 완료. 정적 장애물 회피 시작")
+                else:
+                    self.obstacle_state_pub.publish("Dynamic")
+                    print(f"disappear_obs_count 카운팅 중 {self.disappear_obs_count}번 ")
+                    return
+            else:
+                print("None obstacle!!!")
+                self.obstacle_state_pub.publish("Safe")
+                return
+
+        print("{}st obstacle detecting, distance : {:2f}!!".format(self.cnt_obstacle, self.dist_obstacle))
+        print("avoid trigger : {}".format(self.avoid_trigger))
+
+        obstacle_list.sort(key=lambda x: x[0])  # x(전방) 기준
+        if len(obstacle_list) == 0:
+            pass
+        else:
+            nearest_obstacle = obstacle_list[0]
+
+        # --------------------------- 동적 장애물 분기 ---------------------------
+        if self.dist_obstacle == np.inf and not self.complete_Dynamic:
+            if nearest_obstacle[2] < 5 and self.dynamic_count == 0:
+                print("동적 장애물과의 거리가 5m 이내, 동적 장애물 처음 처음 처음")
+                self.obstacle_state_pub.publish("Dynamic")
+                self.dynamic_count += 1
+                self.last_obs_x = nearest_obstacle[0]
+                return
+
+            elif nearest_obstacle[2] < 5 and abs(nearest_obstacle[0] - self.last_obs_x) < 1.5:
+                print("동적 장애물 나타난 후 계속 존재")
+                self.obstacle_state_pub.publish("Dynamic")
+                self.dynamic_count += 1
+                self.last_obs_x = nearest_obstacle[2]
+                return
+            else:
+                self.obstacle_state_pub.publish("Safe")
+                print("장애물 인식은 되었지만 일정거리 내에 들어오지 않았을 때")
+
+        # ------------------- 동적 이후 정적 장애물 회피 시작 -------------------
+        if self.dist_obstacle == np.inf and self.complete_Dynamic:
+            self.side_roi  = [-2.5, 2.5]
+            self.front_roi = [0.2, 9]
+            self.obstacle_state_pub.publish("Safe")
+
+            if len(obstacle_list) >= 1:
+                self.dist_obstacle = nearest_obstacle[2]
+                self.avoid_trigger = True
+                self.cnt_obstacle = 1
+                self.offset = -1.8   
+                self.cylinder_count = nearest_obstacle[3]
+
+        # --------------------------------- avoid static ---------------------------------
+        if self.avoid_trigger:
+            mid_point = None
+        
+            if self.dist_obstacle + 0.4 < nearest_obstacle[2]: 
+                self.cnt_obstacle += 1
+                self.dist_obstacle = nearest_obstacle[2]
+                
+            else: #첫번째 장애물 회피가 발동되기 전   
+                if self.dist_obstacle > nearest_obstacle[2] + 1.0:
+                    pass
+                else: #self.dist_obstacle <= nearest_obstacle[2] + 1.0
+                    self.dist_obstacle = nearest_obstacle[2]
+
+            if self.cnt_obstacle == 1:
+                if self.cylinder_count == 1: # 장애물로 인식한 바운딩 박스에 원통이 하나일 때
+                    mid_point = (nearest_obstacle[0], nearest_obstacle[1] + self.offset + 0.7)
+                else:                        # 장애물로 인식한 바운딩 박스에 원통이 2개 일 때
+                    mid_point = (nearest_obstacle[0], nearest_obstacle[1] + self.offset)
+
+
+            elif self.cnt_obstacle == 2:
+                self.return_time = time.time()
+                self.front_roi = [0.1, 5]
+                mid_point = (nearest_obstacle[0], nearest_obstacle[1] - self.offset)
+            else:
+                self.avoid_trigger = False
+
+            if mid_point is not None:
+                self.obstacle_state_pub.publish("Static")
+                if self. cylinder_count == 1:
+                    self.publish_obstacles(mid_point, self.middle_point_pub, color=(1.0, 0.0, 0.0))
+                else:
+                    self.publish_obstacles(mid_point, self.middle_point_pub, color=(0.0, 1.0, 0.0))
+
+                target_point = Float32MultiArray()
+                target_point.data.append(mid_point[0])
+                target_point.data.append(mid_point[1])
+                self.target_point_publisher.publish(target_point)
+
+
+
+
+
+    # 장애물 회피 후 원래 경로로 복귀하는 동작
+    def return_afterAvoiding(self): #왼쪽, 오른쪽 터널 점 중 가장 가까운 점
+        # 장애물만 해당된다. 터널은 roi 해당 안됨.
+        self.side_roi = [-1.8, 1.8] # 측면 roi 설정 (단위 : m) -> 회피 후 원래 경로로 돌아가는 동안의 탐지 범위
+        self.front_roi = [0.1, 5.] # 전방 roi 설정
+        self.avoid_trigger = False
+
+        if not self.return_trigger: # 초기 return_trigger 값 : False -> 복귀 동작이 아직 되지 않은 경우에 
+
+            return_heading = abs(self.tunnel_heading - self.vehicle_yaw)
+            print(f"vehicle_yaw:{self.vehicle_yaw}")
+            error_heading = Float32()
+            error_heading.data =return_heading
+            self.error_heading_publisher.publish(error_heading)
+            self.obstacle_state_pub.publish("Return")
+            print(f"return_heading {return_heading}")
+            if return_heading < 0.1: #6도 이내에 들어왔을 때 return 마무리
+                print("return 마무리!!")
+                self.return_trigger = True
+
+
+        else :
+            print("NONE OBSTACLE")
+            self.cnt_obstacle = 3
+            self.obstacle_state_pub.publish("Safe")
+
+            
+
+    def publish_obstacles_to_array(self,point, marker_array, color=(0.0, 0.0, 1.0), marker_id=0):
+        marker = Marker()
+        marker.header.frame_id = "velodyne"  # 프레임 ID 설정
+        marker.type = marker.SPHERE  # 마커 형태
+        marker.action = marker.ADD
+        marker.pose.position.x = point[0]
+        marker.pose.position.y = point[1]
+        marker.pose.position.z = 0
+        marker.scale.x = 0.8
+        marker.scale.y = 0.8
+        marker.scale.z = 0.8
+        marker.color.a = 1.0
+        marker.color.r = color[0]
+        marker.color.g = color[1]
+        marker.color.b = color[2]
+        marker.id = marker_id  # 마커 ID 설정
+        
+        marker_array.markers.append(marker)  # MarkerArray에 마커 추가
+    
+    def cal_obs_data(self,delta_x,delta_y):
+        x=delta_x
+        y=delta_y
+
+        obs_angle = np.rad2deg(math.atan2(y,x))
+        obs_dist = np.sqrt(x**2+y**2)
+        
+        return obs_angle, obs_dist
+    
+
+    
+    def publish_obstacles(self, obs, publisher, color):
+        if obs is not None:
+            x, y = obs[0],obs[1]
+            # Marker 메시지를 생성하여 장애물들을 크고 입체적으로 시각화
+            marker = Marker()
+            marker.header.frame_id = "velodyne"  # 필요에 따라 적절한 프레임으로 변경
+            marker.header.stamp = rospy.Time.now()
+            marker.ns = "obstacles"
+            marker.id = 0
+            marker.type = Marker.SPHERE
+            marker.action = Marker.ADD
+            marker.pose.position.x = x
+            marker.pose.position.y = y
+            marker.pose.position.z = 0.0  # 입체적으로 보이기 위해 z 좌표를 0 이상으로 설정
+            marker.scale.x = 0.6  # 포인트 크기
+            marker.scale.y = 0.6
+            marker.scale.z = 0.6
+            marker.color.a = 1.0
+            marker.color.r = color[0]
+            marker.color.g = color[1]
+            marker.color.b = color[2]
+
+            publisher.publish(marker)
+
+
+    def vehicle_yaw_callback(self, msg):
+        self.is_yaw = True
+        self.vehicle_yaw = msg.data
+
+def run():
+    rospy.init_node("gps2utm")
+    new_classs= GPS2UTM()
+    rospy.spin()
+    
+
+if __name__ == '__main__':
+    run()
+
