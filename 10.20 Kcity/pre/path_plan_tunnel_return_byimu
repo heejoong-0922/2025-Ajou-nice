@@ -102,39 +102,31 @@ class GPS2UTM:
         # ------------------- MarkerArray → 박스 센터/사이즈 추출 --------------------
         # 허용 타입: LINE_LIST(5), CUBE(1), CUBE_LIST(6)
         for m in msg.markers:
-            if m.type not in (Marker.LINE_LIST, Marker.CUBE, Marker.CUBE_LIST):
+            if m.type !=  Marker.LINE_LIST:
                 continue
 
             # 좌표계 보정은 생략(입력 frame_id="velodyne" 가정)
-            if m.type == Marker.LINE_LIST:
                 # 선분들의 점들로부터 AABB 생성
-                if len(m.points) < 4:
-                    continue
-                minx = float('inf'); miny = float('inf')
-                maxx = float('-inf'); maxy = float('-inf')
-                for p in m.points:
-                    if p.x < minx: minx = p.x
-                    if p.x > maxx: maxx = p.x
-                    if p.y < miny: miny = p.y
-                    if p.y > maxy: maxy = p.y
+            if len(m.points) < 4:
+                continue
 
-                center_x = 0.5 * (minx + maxx)
-                center_y = 0.5 * (miny + maxy)
-                width  = max(0.0, maxx - minx)
-                height = max(0.0, maxy - miny)
-            else:
-                # CUBE / CUBE_LIST : pose + scale 사용
-                s = m.scale
-                if not (s.x > 0.0 and s.y > 0.0):
-                    continue
-                center_x = m.pose.position.x
-                center_y = m.pose.position.y
-                width  = s.x
-                height = s.y
+            minx = float('inf'); miny = float('inf')
+            maxx = float('-inf'); maxy = float('-inf')
+            for p in m.points:
+                if p.x < minx: minx = p.x
+                if p.x > maxx: maxx = p.x
+                if p.y < miny: miny = p.y
+                if p.y > maxy: maxy = p.y
+
+            center_x = 0.5 * (minx + maxx)
+            center_y = 0.5 * (miny + maxy)
+            width  = max(0.0, maxx - minx)
+            height = max(0.0, maxy - miny)
 
             # 장애물 크기(대략) — 기존 로직 호환
             obstacle_size = math.sqrt(width**2 + height**2)
             d = distance.euclidean((center_x, center_y), (0.0, 0.0))
+            
             if width - height > 0.3: #원통 2개가 합쳐져 있는 경우
                 cylinder_count= 2
             else: 
