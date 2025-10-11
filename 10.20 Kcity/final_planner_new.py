@@ -14,20 +14,18 @@ class State_machine:
 
         #--------------------------------Subscriber------------------------------------
         rospy.Subscriber('/current_waypoint', Int32, self.index_callback) # ERP42가 경로상 몇 번째 way_point에 위치한지 받아오기
-        rospy.Subscriber("/odom_gps", Odometry, self.odom_callback) # ERP42 위치 정보 받기 (담당자: 진영완님)
+        rospy.Subscriber("/odom_gps", Odometry, self.odom_callback) # ERP42 위치 정보 받기 
         rospy.Subscriber("/erp42_status", erpStatusMsg, self.status_callback)
         rospy.Subscriber("/vehicle_yaw", Float32, self.vehicle_yaw_callback)
         rospy.Subscriber('/global_path',Path, self.global_path_callback)
         rospy.Subscriber("/traffic_light", Int32, self.traffic_light_callback)
-
+        rospy.Subscriber("/delivery_end_trigger", Bool, self.dleivery_end_trigger_callback)
 
         #--------------------------------Publisher--------------------------------------
         self.Desired_velocity_pub = rospy.Publisher('/desired_velocity', Int32, queue_size=1) # 원하는 속도를 제어기에 넘기기
         self.Desired_brake_pub = rospy.Publisher('/desired_brake', Int32, queue_size=1)
         self.Path_pub = rospy.Publisher('/path_state', String, queue_size= 1) # 전역 경로로 주행하게 하기
         self.State_pub = rospy.Publisher('/State', String, queue_size= 1)
-        self.Pickup_end_triggeer_pub = rospy.Publisher('/pickup_end_trigger', Bool, queue_size = 1)
-        self.Delivery_end_triggeer_pub = rospy.Publisher('/delivery_end_trigger', Bool, queue_size = 1)
 
         #==================================Initial_Parameter =================================
         '''
@@ -47,8 +45,7 @@ class State_machine:
         self.pick_end = False
         self.is_status = False
         self.is_path = False
-
-
+        self. delivery_end_trigger = False
 
         #-----------------intersection ------------------
         self.curve_6_finish = False
@@ -319,8 +316,12 @@ class State_machine:
             
             self.Path_state = "Delivery_path"
             self.Path_pub.publish(self.Path_state)
-
-            self.vel_7()
+            
+            if self.delivery_end_trigger: #배달이 끝난 후
+                self.vel_15()
+            
+            else:                         #배달 진행 중
+                self.vel_7()
 
         # ======================= 배달 후 부터 10번 traffic 끝까지 ==================
 
@@ -478,17 +479,19 @@ class State_machine:
         self.is_path = True
         self.global_path_msg = msg
 
-
+    def dleivery_end_trigger_callback(self, msg):
+        
+        self.delivery_end_trigger = msg
 
 #=================== 속도 함수 ====================================
     def vel_20(self): 
         int_msg = Int32()
-        int_msg.data = 12
+        int_msg.data = 20
         self.Desired_velocity_pub.publish(int_msg) 
 
     def vel_15(self): 
         int_msg = Int32()
-        int_msg.data = 7
+        int_msg.data = 15
         self.Desired_velocity_pub.publish(int_msg) 
 
     def vel_12(self): 
