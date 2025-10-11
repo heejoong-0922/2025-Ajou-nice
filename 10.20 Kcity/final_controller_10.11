@@ -28,9 +28,6 @@ LATERAL_OFFSET_FILE_NAME = 'lateral_data/' +path_name + '.csv'
 SPEED_DATA_FILE_NAME = 'speed_data/' + path_name + '.csv'
 
 
-
-
-
 class pure_pursuit :
     def __init__(self):
         rospy.init_node('pure_pursuit', anonymous=True)
@@ -49,6 +46,8 @@ class pure_pursuit :
         rospy.Subscriber('/parking_path', Path, self.parkingPath_callback)
         rospy.Subscriber('/parking_velocity', Int32, self.parkingVelocity_callback)
         rospy.Subscriber('/parking_gear', Int32, self.parkingGear_callback)
+        rospy.Subscriber('/delivery_brake', Int32, self.delivery_brake_callback)
+
 
         # ================================== Publisher ================================ $
         self.erp_42_ctrl_pub = rospy.Publisher("/erp42_ctrl_cmd", erpCmdMsg, queue_size = 1)
@@ -90,15 +89,16 @@ class pure_pursuit :
         self.is_parking_path = False
         self.is_big_steer = False
         self.is_small_steer = False
+        self.is_delivery_brake = False
         self.desired_velocity=0
+        self.delivery_brake = 0
         self.vehicle_yaw=0.
         self.velocity=0.
         self.parking_gear=0
-
-        self.current_position=Point()
         self.vehicle_length = 1.04
+        self.current_position=Point()
         self.Path_state="Global_path"
-        self.steering_filter = FIRFilter(5)#조향각 이후에 필터 적용
+        self.steering_filter = FIRFilter()
         self.pid= pidControl(p_gain =5, i_gain = 0.0, d_gain = 0.001, dt = 0.02)
 
 
@@ -192,37 +192,22 @@ class pure_pursuit :
     
         return steering, target_velocity, brake, gear
     
-    def max_speed(self, velocity):
 
-        if velocity > 200:
-            velocity = 200
-        elif velocity < -200:
-            velocity = -200
+    
 
-        return velocity
-            
-
-    def max_value(self, steering):
-
-        if steering > 2000:
-            steering = 2000
-        elif steering < -2000:
-            steering = -2000
-
-        return steering
-        
+# ======================================== 횡방향 제어기 ==============================================
     def calc_stanley(self, path):
 
-        # ==================== 전륜 중심 utm 좌표 구하기 ==========================
+        # <전륜 중심 utm 좌표 구하기>
         front_utm_x = self.current_position.x + self.GAIN_gps*(self.vehicle_length) * np.cos(self.vehicle_yaw)
         front_utm_y = self.current_position.y + self.GAIN_gps*(self.vehicle_length) * np.sin(self.vehicle_yaw)
 
-        # ==================== 현재 속도 구하기 ===================================
+        # <현재 속도 구하기>
 
         curr_velocity = self.erpStatus_msg.speed
         curr_velocity_kmh = curr_velocity / 10
 
-        # ==================== local_path 불러오기 ================================
+        # <local_path 불러오기>
 
         ref_x = []  
         ref_y = []  
@@ -231,7 +216,7 @@ class pure_pursuit :
             ref_x.append(pose.pose.position.x)
             ref_y.append(pose.pose.position.y)
 
-        # ==================== x(t) 구하기 ========================================
+        #<x(t) 구하기>
 
         dis_P2 = np.sqrt((np.array(ref_x) - front_utm_x)**2 + (np.array(ref_y) - front_utm_y)**2)
         
@@ -261,18 +246,17 @@ class pure_pursuit :
         # else:
         #     self.x_t = np.min(dis_P2) 
 
-        # ====================== pi(t) 구하기 =====================================
+        #<pi(t) 구하기>
 
-        # min_index + 1을 사용하고, 범위를 벗어나는 경우 예외 처리
         if min_index + 1 < len(ref_x):
             delta_east = ref_x[min_index + 1] - ref_x[min_index]
             delta_north = ref_y[min_index + 1] - ref_y[min_index]
-        else:  # min_index가 ref_x의 마지막 인덱스일 때
+        else: 
             if min_index - 1 >= 0:
                 delta_east = ref_x[min_index] - ref_x[min_index - 1]
                 delta_north = ref_y[min_index] - ref_y[min_index - 1]
-            else: # 경로 데이터가 1개일때
-                delta_east = 0  # min_index가 0일 때 (예외 처리)
+            else: 
+                delta_east = 0  
                 delta_north = 0
 
         path_yaw = math.atan2(delta_north, delta_east)
@@ -281,42 +265,49 @@ class pure_pursuit :
 
         pi_t = (pi_t + np.pi) % (2 * np.pi) - np.pi
 
-        # ======================= 조향각 구하기 ======================================
-
         if curr_velocity_kmh != 0:
                 steering = self.GAIN_pi_t*pi_t + np.arctan(self.GAIN_x_t * self.x_t / curr_velocity_kmh) 
 
-        else: # 속도가 0일때 예외처리 
+        else:
             steering = pi_t
 
         rospy.logwarn(f'\n x_t : {self.x_t} \n pi_t : {pi_t} \n path_yaw : {path_yaw}')
         steering_raw = 2000 * (steering * 0.422)                    #조향각 이후에 필터 적용
-        steering_filtered = self.steering_filter.apply(steering_raw)#조향각 이후에 평균냄
-        steering = int(steering_filtered)                           #실수형 정수형 변환
+        steering_filtered = self.steering_filter.apply(steering_raw)
+        steering = int(steering_filtered)                           
 
         print("===============steering==================")
-            
         print("steering: {:.2f}".format(steering))
-
         print("=================================")
-    
+
         return steering
 
 
 
-    
+
+
+#======================================== 종방향 제어기 =============================================
+
     def control_vel_brake(self): #target_vel과 brake 계산 
         
-            if self.is_parkingVel: #주차 시에는 parking_velocity를 이용해서 목표속도 설정
+            #주차 -> 속도만 주차 플래너에서 조절, brake는 메인 planner에서 조정
+            if self.Path_state == "Parking_path" and self.is_parkingVel:
                 goal_velocity = self.parking_velocity
                 velocity, brake = self.velocity_pid(goal_velocity)
-                
+
                 if goal_velocity == 0:
                     brake = 100
+
+            #배달 -> 속도는 메인 planner에서 조절, brake는 배달 planner에서 조절
+            elif self.Path_state == "Delivery_path":
+                goal_velocity = self.desired_velocity
+                velocity, brake = self.velocity_pid(goal_velocity)
+                if self.is_delivery_brake:
+                    brake = self.delivery_brake
+
             else:
                 goal_velocity = self.desired_velocity
                 velocity, brake = self.velocity_pid(goal_velocity)
-
 
             return velocity , brake
 
@@ -328,8 +319,13 @@ class pure_pursuit :
         output = self.pid.pid(desired_velocity*10, self.erpStatus_msg.speed)
 
         if desired_velocity*10 -self.erpStatus_msg.speed > 20: #현재속도보다 목표속도가 2km/h 더 클때
-            velocity = 200
-            brake = 1
+            
+            if self.Path_state == "Small_Obstacle_avoiding_path":
+                velocity = 100
+                brake = 1                
+            else:
+                velocity = 200
+                brake = 1
             print("가속 가속 가속 가속")
         
         elif abs(desired_velocity*10-self.erpStatus_msg.speed) <= 20: #속도 유지하는 경우 목표속도를 입력속도로 집어넣는다.
@@ -346,10 +342,18 @@ class pure_pursuit :
             velocity = desired_velocity*10
             brake = -(output*self.BRAKE_GAIN)
             if brake < 1:
-                brake =1   
+                brake =1  
             print("감속 감속 감속 감속")
 
         return velocity, brake
+    
+
+
+
+
+
+
+
 #===================== callback 함수 =========================
     def desiredVelocity_callback(self, msg):
 
@@ -407,7 +411,41 @@ class pure_pursuit :
         self.velocity = self.erpStatus_msg.speed
         self.brake = self.erpStatus_msg.brake
 
-##################  데이터 검증용  ###################
+    def delivery_brake_callback(self, msg):
+        self.is_delivery_brake = True
+        self.delivery_brake = msg.data
+
+
+    def max_speed(self, velocity):
+
+        if velocity > 200:
+            velocity = 200
+        elif velocity < -200:
+            velocity = -200
+
+        return velocity
+            
+
+    def max_value(self, steering):
+
+        if steering > 2000:
+            steering = 2000
+        elif steering < -2000:
+            steering = -2000
+
+        return steering
+
+
+
+
+
+
+
+
+
+
+
+#============================  데이터 검증용  ===================================
 
 # 1.steering
     def steering_data(self, DESIRED_STEER):
@@ -468,6 +506,27 @@ class pure_pursuit :
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 class pidControl:
     def __init__(self, p_gain, i_gain , d_gain, dt):
         self.p_gain = p_gain
@@ -489,6 +548,10 @@ class pidControl:
         self.prev_error = error
 
         return output
+    
+
+
+
 class FIRFilter:
     def __init__(self, window_size_straight=5, window_size_curve=3, steering_threshold=1.0): #1이 직선과 곡선의 기준 1을 넘으면 곡선으로 간주-> window 사이즈 줄임
         self.window_size_straight = window_size_straight                                     #조정이 필요 직선과 곡선의 기준이 모호
