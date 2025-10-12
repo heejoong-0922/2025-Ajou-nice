@@ -72,7 +72,7 @@ class GPS2UTM:
         self.tunnel_waypoint = np.arange(-2 , 77)
 
         #=======================터널 안 헤딩 ==============================
-        self.tunnel_heading = np.deg2rad(-179)
+        self.tunnel_heading = np.deg2rad(158)
     
     def waypoint_callback(self, msg):
         self.current_waypoint = msg.data
@@ -127,7 +127,7 @@ class GPS2UTM:
             obstacle_size = math.sqrt(width**2 + height**2)
             d = distance.euclidean((center_x, center_y), (0.0, 0.0))
             
-            if width - height > 0.3: #원통 2개가 합쳐져 있는 경우
+            if height - width > 0.3: #원통 2개가 합쳐져 있는 경우
                 cylinder_count= 2
             else: 
                 cylinder_count = 1    
@@ -136,10 +136,12 @@ class GPS2UTM:
             if obstacle_size <= 1.5 and obstacle_size >= 0.3:
                 if self.front_roi[0] < center_x < self.front_roi[1]:
                     if self.side_roi[0] < center_y < self.side_roi[1]:
-                        obstacle_list.append([center_x, center_y, d, cylinder_count])
+                        obstacle_list.append([center_x, center_y, d, cylinder_count,width, height])
+                        
             # -------------------------------------------------------------------------------
         if len(obstacle_list) == 0:
             if self.cnt_obstacle >= 2:
+                time.sleep(2)
                 self.return_afterAvoiding()
                 return
             elif not self.dynamic_count == 0 and not self.complete_Dynamic:
@@ -195,12 +197,12 @@ class GPS2UTM:
                 self.avoid_trigger = True
                 self.cnt_obstacle = 1
                 self.offset = -1.8   
-                self.cylinder_count = nearest_obstacle[3]
+
 
         # --------------------------------- avoid static ---------------------------------
         if self.avoid_trigger:
             mid_point = None
-        
+            self.cylinder_count = nearest_obstacle[3]
             if self.dist_obstacle + 0.4 < nearest_obstacle[2]: 
                 self.cnt_obstacle += 1
                 self.dist_obstacle = nearest_obstacle[2]
@@ -213,9 +215,11 @@ class GPS2UTM:
 
             if self.cnt_obstacle == 1:
                 if self.cylinder_count == 1: # 장애물로 인식한 바운딩 박스에 원통이 하나일 때
-                    mid_point = (nearest_obstacle[0], nearest_obstacle[1] + self.offset + 0.7)
+                    mid_point = (nearest_obstacle[0], nearest_obstacle[1] + self.offset +0.1)
+                    print(f"바운딩 박스에 장애물 한 개 width:{nearest_obstacle[4]} height: {nearest_obstacle[5]}")
                 else:                        # 장애물로 인식한 바운딩 박스에 원통이 2개 일 때
                     mid_point = (nearest_obstacle[0], nearest_obstacle[1] + self.offset)
+                    print(f"바운딩 박스에 장애물 두 개 width:{nearest_obstacle[4]} height: {nearest_obstacle[5]}")
 
 
             elif self.cnt_obstacle == 2:
@@ -249,7 +253,6 @@ class GPS2UTM:
         self.avoid_trigger = False
 
         if not self.return_trigger: # 초기 return_trigger 값 : False -> 복귀 동작이 아직 되지 않은 경우에 
-
             return_heading = abs(self.tunnel_heading - self.vehicle_yaw)
             print(f"vehicle_yaw:{self.vehicle_yaw}")
             error_heading = Float32()
@@ -336,4 +339,3 @@ def run():
 
 if __name__ == '__main__':
     run()
-
