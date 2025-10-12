@@ -6,6 +6,7 @@ import numpy as np
 from geometry_msgs.msg import Twist, TwistStamped
 from nav_msgs.msg import Odometry, Path
 from erp_driver.msg import erpCmdMsg, erpStatusMsg
+from tracking_msg.msg import TrackingObjectArray
 import time, math
 
 class State_machine:
@@ -20,13 +21,15 @@ class State_machine:
         rospy.Subscriber('/global_path',Path, self.global_path_callback)
         rospy.Subscriber("/traffic_light", Int32, self.traffic_light_callback)
         rospy.Subscriber("/delivery_end_trigger", Bool, self.dleivery_end_trigger_callback)
+        rospy.Subscriber('/Y2L_fusion/fused_3d_box', TrackingObjectArray, self.object_callback, queue_size=1)
+
 
         #--------------------------------Publisher--------------------------------------
         self.Desired_velocity_pub = rospy.Publisher('/desired_velocity', Int32, queue_size=1) # 원하는 속도를 제어기에 넘기기
         self.Desired_brake_pub = rospy.Publisher('/desired_brake', Int32, queue_size=1)
         self.Path_pub = rospy.Publisher('/path_state', String, queue_size= 1) # 전역 경로로 주행하게 하기
         self.State_pub = rospy.Publisher('/State', String, queue_size= 1)
-
+        self.Traget_sign_pub = rospy.Publisher('/target_sign',Int32, queue_size = 1)
         #==================================Initial_Parameter =================================
         '''
         신호등: /traffic_light
@@ -39,6 +42,7 @@ class State_machine:
         self.Path_state="Global_path"
         self.traffic_light = 0
         self.index = 0
+        self.sign_type_id = None #표지판의 초기값.
         self.is_index = False
         self.is_yaw = False
         self.is_odom=False
@@ -112,7 +116,7 @@ class State_machine:
             print("Before Start, Sensor input check")
         #================ 시작점부터 픽업 전까지 ==============================
         
-        elif 0 <= self.index < self.pickup_start_index: 
+        elif 0 <= self.index < self.pickup_start_index:
             
             print("구간: 시작점부터 픽업 전까지")
             
@@ -316,7 +320,8 @@ class State_machine:
             
             self.Path_state = "Delivery_path"
             self.Path_pub.publish(self.Path_state)
-            
+            self.sign_pub() #픽업 시 받은 표지판 id pub
+
             if self.delivery_end_trigger: #배달이 끝난 후
                 self.vel_15()
             
@@ -451,14 +456,11 @@ class State_machine:
 
 #------------------------------Callback_function--------------------------------
     def index_callback(self, msg):
-
         self.is_index = True
         self.index = msg.data
     
     def odom_callback(self,msg):
-        
         self.is_odom=True
-        
         self.x=msg.pose.pose.position.x
         self.y=msg.pose.pose.position.y
 
@@ -472,7 +474,6 @@ class State_machine:
         self.velocity = self.erpStatus_msg.speed
         
     def traffic_light_callback(self, msg):
-
         self.traffic_light = msg.data
 
     def global_path_callback(self,msg):
@@ -480,8 +481,22 @@ class State_machine:
         self.global_path_msg = msg
 
     def dleivery_end_trigger_callback(self, msg):
-        
         self.delivery_end_trigger = msg
+
+    def object_callback(self, msg : TrackingObjectArray):
+        if self.Path_state == "Pickup":
+            for obj in msg.array:
+                if not hasattr(obj, "bbox") or not hasattr(obj.bbox, "points") or len(obj.bbox.points) < 8: continue
+                sign = getattr(obj, "type_id", None)
+                if sign not in (3, 4, 5): continue
+                self.sign_type_id = obj.type_id
+
+    def sign_pub(self):
+        msg = Int32()
+        msg.data = self.sign_type_id
+        self.Traget_sign_pub.publish(msg) #인식한 표지판의 id
+
+
 
 #=================== 속도 함수 ====================================
     def vel_20(self): 
