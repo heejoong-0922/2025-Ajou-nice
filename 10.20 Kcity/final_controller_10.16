@@ -198,6 +198,31 @@ class pure_pursuit :
 # ======================================== 횡방향 제어기 ==============================================
     def calc_stanley(self, path):
 
+        if self.desired_velocity == 7:
+            self.GAIN_pi_t =4.75
+            self.GAIN_x_t =2.25
+            self.GAIN_gps =4
+
+        elif self.desired_velocity == 12:
+            self.GAIN_pi_t =4.75
+            self.GAIN_x_t =2.25
+            self.GAIN_gps =4
+
+        elif self.desired_velocity == 15:
+            self.GAIN_pi_t =4.75
+            self.GAIN_x_t =2.25
+            self.GAIN_gps =4
+
+        elif self.desired_velocity == 20:
+            self.GAIN_pi_t =4.75
+            self.GAIN_x_t =2.25
+            self.GAIN_gps =4
+
+        else:
+            self.GAIN_pi_t =4.75
+            self.GAIN_x_t =2.25
+            self.GAIN_gps =4
+
         # <전륜 중심 utm 좌표 구하기>
         front_utm_x = self.current_position.x + self.GAIN_gps*(self.vehicle_length) * np.cos(self.vehicle_yaw)
         front_utm_y = self.current_position.y + self.GAIN_gps*(self.vehicle_length) * np.sin(self.vehicle_yaw)
@@ -239,12 +264,6 @@ class pure_pursuit :
         
         #####local 좌표를 이용한 횡방향 오차 계산#####
         self.x_t = -y_2 
-
-        #####original x_t ###########
-        # if y_2 > 0: #차량 기준 경로점 왼쪽
-        #     self.x_t = -np.min(dis_P2) 
-        # else:
-        #     self.x_t = np.min(dis_P2) 
 
         #<pi(t) 구하기>
 
