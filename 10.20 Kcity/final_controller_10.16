@@ -46,7 +46,7 @@ class pure_pursuit :
         rospy.Subscriber('/parking_path', Path, self.parkingPath_callback)
         rospy.Subscriber('/parking_velocity', Int32, self.parkingVelocity_callback)
         rospy.Subscriber('/parking_gear', Int32, self.parkingGear_callback)
-        rospy.Subscriber('/delivery_brake', Int32, self.delivery_brake_callback)
+        rospy.Subscriber('/desired_brake', Int32, self.desired_brake_callback)
 
 
         # ================================== Publisher ================================ $
@@ -89,9 +89,9 @@ class pure_pursuit :
         self.is_parking_path = False
         self.is_big_steer = False
         self.is_small_steer = False
-        self.is_delivery_brake = False
+        self.is_desired_brake = False
         self.desired_velocity=0
-        self.delivery_brake = 0
+        self.desired_brake = 0
         self.vehicle_yaw=0.
         self.velocity=0.
         self.parking_gear=0
@@ -198,30 +198,35 @@ class pure_pursuit :
 # ======================================== 횡방향 제어기 ==============================================
     def calc_stanley(self, path):
 
-        if self.desired_velocity == 7:
-            self.GAIN_pi_t =4.75
-            self.GAIN_x_t =2.25
-            self.GAIN_gps =4
+        if self.desired_velocity == 7: #일단 12km/h 파라미터로 설정함
+            self.GAIN_pi_t =3.25
+            self.GAIN_x_t =4.75
+            self.GAIN_gps =3
 
-        elif self.desired_velocity == 12:
-            self.GAIN_pi_t =4.75
-            self.GAIN_x_t =2.25
-            self.GAIN_gps =4
+        elif self.desired_velocity == 12: 
+            self.GAIN_pi_t =3.25
+            self.GAIN_x_t = 4.75
+            self.GAIN_gps =4.5
 
         elif self.desired_velocity == 15:
-            self.GAIN_pi_t =4.75
-            self.GAIN_x_t =2.25
-            self.GAIN_gps =4
+            self.GAIN_pi_t =2
+            self.GAIN_x_t = 3.25
+            self.GAIN_gps = 3.25
+
+        elif self.desired_velocity == 17:
+            self.GAIN_pi_t =3.25
+            self.GAIN_x_t = 5.25
+            self.GAIN_gps = 5.5
 
         elif self.desired_velocity == 20:
-            self.GAIN_pi_t =4.75
-            self.GAIN_x_t =2.25
+            self.GAIN_pi_t = 2.5
+            self.GAIN_x_t = 4.5
             self.GAIN_gps =4
 
         else:
-            self.GAIN_pi_t =4.75
-            self.GAIN_x_t =2.25
-            self.GAIN_gps =4
+            self.GAIN_pi_t =3.25
+            self.GAIN_x_t =4.75
+            self.GAIN_gps =4.5
 
         # <전륜 중심 utm 좌표 구하기>
         front_utm_x = self.current_position.x + self.GAIN_gps*(self.vehicle_length) * np.cos(self.vehicle_yaw)
@@ -255,12 +260,6 @@ class pure_pursuit :
         # 현재 위치와 경로 위치의 차이 계산
         x_2 = (Way_x - self.current_position.x) * np.cos(self.vehicle_yaw) + (Way_y - self.current_position.y) * np.sin(self.vehicle_yaw)
         y_2 = - (Way_x - front_utm_x) * np.sin(self.vehicle_yaw) + (Way_y - front_utm_y) * np.cos(self.vehicle_yaw)        
-
-        #####vector 외적을 이용한 횡방향 오차 계산####
-        # heading_vec =np.array([np.cos(self.vehicle_yaw),np.sin(self.vehicle_yaw)])
-        # error_vec = np.array([Way_x-front_utm_x, Way_y-front_utm_y])
-        # cross_track_error =np.cross(heading_vec,error_vec)
-        # self.x_t = -cross_track_error
         
         #####local 좌표를 이용한 횡방향 오차 계산#####
         self.x_t = -y_2 
@@ -313,21 +312,18 @@ class pure_pursuit :
             if self.Path_state == "Parking_path" and self.is_parkingVel:
                 goal_velocity = self.parking_velocity
                 velocity, brake = self.velocity_pid(goal_velocity)
-
-                if goal_velocity == 0:
-                    brake = 100
-
-            #배달 -> 속도는 메인 planner에서 조절, brake는 배달 planner에서 조절
-            elif self.Path_state == "Delivery_path":
+            #커브 구간에서는 가속시 뺌
+            if self.Path_state == "Curve":
                 goal_velocity = self.desired_velocity
-                velocity, brake = self.velocity_pid(goal_velocity)
-                if self.is_delivery_brake:
-                    brake = self.delivery_brake
+                velocity, brake = self.velocity_pid_noaccel(goal_velocity)
 
             else:
                 goal_velocity = self.desired_velocity
                 velocity, brake = self.velocity_pid(goal_velocity)
 
+            if self.desired_brake != 0 or 1: #desired_brake가 0이 아니면 사용
+                brake = self.desired_brake
+            
             return velocity , brake
 
 
@@ -337,7 +333,7 @@ class pure_pursuit :
         
         output = self.pid.pid(desired_velocity*10, self.erpStatus_msg.speed)
 
-        if desired_velocity*10 -self.erpStatus_msg.speed > 20: #현재속도보다 목표속도가 2km/h 더 클때
+        if desired_velocity*10 -self.erpStatus_msg.speed > 17.5: #현재속도보다 목표속도가 1.75km/h 더 클때
             
             if self.Path_state == "Small_Obstacle_avoiding_path":
                 velocity = 100
@@ -347,7 +343,7 @@ class pure_pursuit :
                 brake = 1
             print("가속 가속 가속 가속")
         
-        elif abs(desired_velocity*10-self.erpStatus_msg.speed) <= 20: #속도 유지하는 경우 목표속도를 입력속도로 집어넣는다.
+        elif abs(desired_velocity*10-self.erpStatus_msg.speed) <= 17.5: #속도 유지하는 경우 목표속도를 입력속도로 집어넣는다.
             
             velocity = desired_velocity*10
             brake = 1
@@ -366,7 +362,25 @@ class pure_pursuit :
 
         return velocity, brake
     
+    def velocity_pid_noaccel(self, desired_velocity): 
+            
+            output = self.pid.pid(desired_velocity*10, self.erpStatus_msg.speed)
+            
+            if desired_velocity*10-self.erpStatus_msg.speed >= -17.5: #속도 유지하는 경우 목표속도를 입력속도로 집어넣는다.
+                
+                velocity = desired_velocity*10
+                brake = 1
+                print("속도유지 속도유지 속도유지")
+            
+            else:
+                velocity = desired_velocity*10
+                brake = -(output*self.BRAKE_GAIN)
+                if brake < 1:
+                    brake =1  
+                print("감속 감속 감속 감속")
 
+            return velocity, brake
+        
 
 
 
@@ -430,9 +444,9 @@ class pure_pursuit :
         self.velocity = self.erpStatus_msg.speed
         self.brake = self.erpStatus_msg.brake
 
-    def delivery_brake_callback(self, msg):
-        self.is_delivery_brake = True
-        self.delivery_brake = msg.data
+    def desired_brake_callback(self, msg):
+        self.is_desired_brake = True
+        self.desired_brake = msg.data
 
 
     def max_speed(self, velocity):
