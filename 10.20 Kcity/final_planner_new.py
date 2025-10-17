@@ -1,3 +1,4 @@
+
 import rospy
 import rospkg
 from std_msgs.msg import Int32, Bool, Float32MultiArray, String, Float32
@@ -122,7 +123,7 @@ class State_machine:
             
             self.Path_state= "Global_path"
             self.Path_pub.publish(self.Path_state)
-            self.vel_15()
+            self.vel_17()
 
         #======================== 픽업 ==================================
 
@@ -133,15 +134,17 @@ class State_machine:
             self.Path_state= "Pickup"
             self.Path_pub.publish(self.Path_state)
 
-            if self.pickup_stop_index -17 < self.index  and not self.pick_end:
+            if self.pickup_stop_index -17 <= self.index  and not self.pick_end:
                 self.stop()
+                self.apply_brake()
                 time.sleep(3)
+                self.remove_brake()
                 self.pick_end = True
 
             else:
                 self.vel_7()
 
-        #======================== 픽업 후부터 2번 traffic 까지 ================================
+        #======================== 픽업 후부터 traffic 2번까지 ================================
 
         elif self.pickup_end_index <= self.index < self.traffic_2_end:
             
@@ -155,8 +158,8 @@ class State_machine:
                 self.vel_20()
 
             else:
-                rospy.logwarn('red light 인식됨')
-                if self.traffic_2_stop-39 <self.index <self.traffic_2_stop:
+                rospy.logwarn('red light or yellow light 인식됨')
+                if self.traffic_2_stop-53 <= self.index <self.traffic_2_stop+ 3:
                     self.stop()
                 else:
                     self.vel_20()
@@ -173,14 +176,14 @@ class State_machine:
             
             if self.traffic_light == 8:
                 rospy.logwarn('green light 인식됨')
-                self.vel_12()
+                self.vel_20()
 
             else:
                 rospy.logwarn('red light 인식됨')
-                if self.traffic_3_stop-39 < self.index < self.traffic_3_stop:
+                if self.traffic_3_stop-53 <= self.index < self.traffic_3_stop:
                     self.stop()
                 else:
-                    self.vel_12()
+                    self.vel_20()
 
         #==================== traffic 3번 부터 대형 장애물 전까지 ===================================
         
@@ -217,14 +220,14 @@ class State_machine:
 
             else:
                 rospy.logwarn('red light 인식됨')
-                if self.traffic_5_stop-39 < self.index < self.traffic_5_stop:
+                if self.traffic_5_stop-53 <= self.index < self.traffic_5_stop:
                     self.stop()
                 else:
                     self.vel_20()
             
         #==================== traffic 5번 부터 6번 곡선구간 전까지 ===================================
         
-        elif self.traffic_5_end <= self.index < self.curve_6_start:
+        elif self.traffic_5_end <= self.index < self.curve_6_start- 50: 
         
             print("구간: traffic 5번 부터 6번 곡선 구간 전까지")
 
@@ -234,17 +237,22 @@ class State_machine:
 
         #==================== 6번 곡선구간===================================
         
-        elif self.curve_6_start <= self.index < self.curve_6_end:
+        elif self.curve_6_start-50 <= self.index < self.curve_6_end:   #커브들어가기 50개 index전부터 속도 5로 감속하기 
         
             print("구간: 6번 곡선 구간")
             
             self.Path_state = "Curve"
             self.Path_pub.publish(self.Path_state)
+            if self.curve_6_start -50 <= self.index < self.curve_6_stop-20:
+                rospy.logwarn('before curve 감속')
+                self.vel_5()
 
-            if self.curve_6_stop-39 < self.index < self.curve_6_stop and self.curve_6_finish:
-                rospy.logwarn('stop not end')
+            elif self.curve_6_stop-20 <= self.index < self.curve_6_stop and self.curve_6_finish:
+                rospy.logwarn('stop') 
                 self.stop()
+                self.apply_brake()
                 time.sleep(3)
+                self.remove_brake()
                 self.curve_6_finish = True
 
             else:
@@ -260,7 +268,7 @@ class State_machine:
             self.Path_state = "Intersection"
             self.Path_pub.publish(self.Path_state)
 
-            if self.traffic_7_stop -39 < self.index < self.traffic_7_stop and not self.Intersection_7_finish:
+            if self.traffic_7_stop -53 <= self.index < self.traffic_7_stop and not self.Intersection_7_finish:
                 rospy.logwarn('first stop not end')
                 self.stop()
                 time.sleep(3)
@@ -295,7 +303,7 @@ class State_machine:
 
             else:
                 rospy.logwarn('red light 인식됨')
-                if self.traffic_8_stop-39 < self.index < self.traffic_8_stop:
+                if self.traffic_8_stop-53 <= self.index < self.traffic_8_stop:
                     self.stop()
                 else:
                     self.vel_20()
@@ -343,7 +351,7 @@ class State_machine:
 
             else:
                 rospy.logwarn('red light 인식됨')
-                if self.traffic_10_stop-39 < self.index < self.traffic_10_stop:
+                if self.traffic_10_stop-37 <= self.index < self.traffic_10_stop:
                     self.stop()
                 else:
                     self.vel_15()
@@ -363,7 +371,7 @@ class State_machine:
 
             else:
                 rospy.logwarn('red light 인식됨')
-                if self.traffic_11_stop-39 < self.index < self.traffic_11_stop:
+                if self.traffic_11_stop-37 < self.index < self.traffic_11_stop:
                     self.stop()
                 else:
                     self.vel_15()
@@ -503,7 +511,12 @@ class State_machine:
         int_msg = Int32()
         int_msg.data = 20
         self.Desired_velocity_pub.publish(int_msg) 
-
+    
+    def vel_17(self): 
+        int_msg = Int32()
+        int_msg.data = 15
+        self.Desired_velocity_pub.publish(int_msg) 
+    
     def vel_15(self): 
         int_msg = Int32()
         int_msg.data = 15
@@ -524,6 +537,11 @@ class State_machine:
         int_msg.data = 7
         self.Desired_velocity_pub.publish(int_msg) 
     
+    def vel_5(self): 
+        int_msg = Int32()
+        int_msg.data = 5
+        self.Desired_velocity_pub.publish(int_msg) 
+
     def big_obs_avoid_vel(self):
         int_msg = Int32()
         int_msg.data = 6
@@ -543,6 +561,16 @@ class State_machine:
         int_msg = Int32()
         int_msg.data = 0
         self.Desired_velocity_pub.publish(int_msg)
+
+    def apply_brake(self):
+        int_msg = Int32()
+        int_msg.data = 200
+        self.Desired_brake_pub.publish(int_msg)
+
+    def remove_brake(self):
+        int_msg = Int32()
+        int_msg.data = 0
+        self.Desired_brake_pub.publish(int_msg)
 
 if __name__ == '__main__':
     try:
