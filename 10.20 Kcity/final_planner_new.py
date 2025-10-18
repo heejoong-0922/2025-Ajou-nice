@@ -1,4 +1,3 @@
-
 import rospy
 import rospkg
 from std_msgs.msg import Int32, Bool, Float32MultiArray, String, Float32
@@ -30,7 +29,7 @@ class State_machine:
         self.Desired_brake_pub = rospy.Publisher('/desired_brake', Int32, queue_size=1)
         self.Path_pub = rospy.Publisher('/path_state', String, queue_size= 1) # 전역 경로로 주행하게 하기
         self.State_pub = rospy.Publisher('/State', String, queue_size= 1)
-        self.Traget_sign_pub = rospy.Publisher('/target_sign',Int32, queue_size = 1)
+        self.Traget_sign_pub = rospy.Publisher('/target_sign',Int32, queue_size = 1) #배달 구간에서 어느 표지판으로 가야하는지 정보 전달
         #==================================Initial_Parameter =================================
         '''
         신호등: /traffic_light
@@ -43,7 +42,8 @@ class State_machine:
         self.Path_state="Global_path"
         self.traffic_light = 0
         self.index = 0
-        self.sign_type_id = None #표지판의 초기값.
+        self.sign_type_id = None #표지판의 초기값
+        self.target_sign = None #path_plan_delivery 쪽으로 발행하는 메시지
         self.is_index = False
         self.is_yaw = False
         self.is_odom=False
@@ -134,7 +134,11 @@ class State_machine:
             self.Path_state= "Pickup"
             self.Path_pub.publish(self.Path_state)
 
-            if self.pickup_stop_index -17 <= self.index  and not self.pick_end:
+            if self.pickup_start_index <= self.index < self.pickup_stop_index -17: #표지판 sign 업데이트 하는 구간
+                self.target_sign = self.sign_type_id
+                self.vel_7()
+
+            elif self.pickup_stop_index -17 <= self.index  and not self.pick_end:
                 self.stop()
                 self.apply_brake()
                 time.sleep(3)
@@ -142,7 +146,7 @@ class State_machine:
                 self.pick_end = True
 
             else:
-                self.vel_7()
+                self.vel_17()
 
         #======================== 픽업 후부터 traffic 2번까지 ================================
 
@@ -501,7 +505,7 @@ class State_machine:
 
     def sign_pub(self):
         msg = Int32()
-        msg.data = self.sign_type_id
+        msg.data = self.target_sign
         self.Traget_sign_pub.publish(msg) #인식한 표지판의 id
 
 
